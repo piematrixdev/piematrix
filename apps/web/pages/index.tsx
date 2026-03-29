@@ -221,6 +221,26 @@ export default function Home() {
   const satelliteTrackerRef = useRef<ReturnType<typeof createSatelliteTracker> | null>(null);
   const meteorShowerCatalogRef = useRef<ReturnType<typeof createMeteorShowerCatalog> | null>(null);
   const initializationRef = useRef<boolean>(false);
+  const timeSliderThrottleRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingTimeRef = useRef<Date | null>(null);
+  
+  // Pre-calculated position cache for smooth time slider
+  // Stores positions at 15-minute intervals (96 snapshots per day)
+  const positionCacheRef = useRef<{
+    date: string; // YYYY-MM-DD to invalidate on date change
+    observer: GeographicCoordinates | null;
+    snapshots: Map<number, { // key = minutes from midnight (0-1439)
+      deepSkyPositions: Map<string, DeepSkyPosition>;
+      meteorShowerRadiants: Map<string, MeteorShowerPosition>;
+      lst: number;
+    }>;
+    isBuilding: boolean;
+  }>({
+    date: '',
+    observer: null,
+    snapshots: new Map(),
+    isBuilding: false,
+  });
 
   // Fetch location name using reverse geocoding
   const fetchLocationName = useCallback(async (coords: GeographicCoordinates): Promise<string | null> => {
@@ -253,7 +273,101 @@ export default function Home() {
   const lastDeepSkyUpdateRef = useRef<number>(0);
   const lastMeteorUpdateRef = useRef<number>(0);
   
+<<<<<<< Updated upstream
   // Handle sky position updates - heavily throttled to reduce re-renders
+=======
+  // Build position cache for the current day (runs in background)
+  const buildPositionCache = useCallback((date: Date, observer: GeographicCoordinates) => {
+    const dateStr = date.toISOString().split('T')[0];
+    const cache = positionCacheRef.current;
+    
+    // Skip if already building or cache is current
+    if (cache.isBuilding || (cache.date === dateStr && cache.observer?.latitude === observer.latitude && cache.observer?.longitude === observer.longitude)) {
+      return;
+    }
+    
+    cache.isBuilding = true;
+    cache.date = dateStr;
+    cache.observer = observer;
+    cache.snapshots.clear();
+    
+    // Build cache in chunks to avoid blocking UI
+    const INTERVAL = 15; // minutes between snapshots
+    let currentMinute = 0;
+    
+    const buildChunk = () => {
+      const chunkSize = 12; // Build 12 snapshots per frame (3 hours worth)
+      const endMinute = Math.min(currentMinute + chunkSize * INTERVAL, 1440);
+      
+      while (currentMinute < endMinute) {
+        const snapshotDate = new Date(date);
+        snapshotDate.setHours(0, 0, 0, 0);
+        snapshotDate.setMinutes(currentMinute);
+        
+        const lst = calculateLST(observer.longitude, snapshotDate);
+        
+        // Calculate deep sky positions
+        const deepSkyArray = deepSkyCatalogRef.current?.getVisibleObjects(observer, lst) ?? [];
+        const deepSkyPositions = new Map<string, DeepSkyPosition>();
+        for (const pos of deepSkyArray) {
+          deepSkyPositions.set(pos.object.id, pos);
+        }
+        
+        // Calculate meteor shower radiants
+        const meteorArray = meteorShowerCatalogRef.current?.getRadiantPositions(snapshotDate, observer, lst) ?? [];
+        const meteorShowerRadiants = new Map<string, MeteorShowerPosition>();
+        for (const pos of meteorArray) {
+          meteorShowerRadiants.set(pos.shower.id, pos);
+        }
+        
+        cache.snapshots.set(currentMinute, {
+          deepSkyPositions,
+          meteorShowerRadiants,
+          lst,
+        });
+        
+        currentMinute += INTERVAL;
+      }
+      
+      if (currentMinute < 1440) {
+        // Continue building in next frame
+        requestAnimationFrame(buildChunk);
+      } else {
+        cache.isBuilding = false;
+        console.log('Position cache built:', cache.snapshots.size, 'snapshots');
+      }
+    };
+    
+    // Start building after a short delay to not block initial render
+    setTimeout(() => requestAnimationFrame(buildChunk), 100);
+  }, []);
+  
+  // Get cached positions for a given time (interpolates between snapshots)
+  const getCachedPositions = useCallback((time: Date): {
+    deepSkyPositions: Map<string, DeepSkyPosition>;
+    meteorShowerRadiants: Map<string, MeteorShowerPosition>;
+    lst: number;
+  } | null => {
+    const cache = positionCacheRef.current;
+    const dateStr = time.toISOString().split('T')[0];
+    
+    // Check if cache is valid for this date
+    if (cache.date !== dateStr || cache.snapshots.size === 0) {
+      return null;
+    }
+    
+    const minutes = time.getHours() * 60 + time.getMinutes();
+    const INTERVAL = 15;
+    
+    // Find the nearest snapshot (round to nearest interval)
+    const nearestMinute = Math.round(minutes / INTERVAL) * INTERVAL;
+    const clampedMinute = Math.min(Math.max(nearestMinute, 0), 1425); // 1425 = 23:45
+    
+    return cache.snapshots.get(clampedMinute) || null;
+  }, []);
+
+  // Handle sky position updates - throttle LST updates to reduce re-renders
+>>>>>>> Stashed changes
   const handlePositionsUpdate = useCallback((positions: SkyPositions) => {
     setState(prev => {
       if (!prev.observer) return { ...prev, currentTime: positions.timestamp };
@@ -1071,14 +1185,103 @@ export default function Home() {
 
   // Time selector controls
   const toggleTimeSelector = useCallback(() => {
-    setState(prev => ({ ...prev, showTimeSelector: !prev.showTimeSelector }));
-  }, []);
+    setState(prev => {
+      const newShowTimeSelector = !prev.showTimeSelector;
+      // Build position cache when opening time selector
+      if (newShowTimeSelector && prev.observer) {
+        buildPositionCache(prev.selectedDate, prev.observer);
+      }
+      return { ...prev, showTimeSelector: newShowTimeSelector };
+    });
+  }, [buildPositionCache]);
 
   const setSelectedTime = useCallback((date: Date) => {
     setState(prev => ({ ...prev, selectedDate: date, isRealTime: false }));
     // Update sky calculator with new time
     if (skyCalculatorRef.current) {
       skyCalculatorRef.current.setTime(date);
+    }
+  }, []);
+
+  // Smooth time slider - converts slider value (0-1440 minutes) to time
+  // Uses pre-calculated position cache for instant updates
+  const handleTimeSliderChange = useCallback((minutes: number) => {
+    const newDate = new Date(state.selectedDate);
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    newDate.setHours(hours, mins, 0, 0);
+    
+    // Try to get cached positions for instant update
+    const cached = getCachedPositions(newDate);
+    
+    if (cached && state.observer) {
+      // Use cached positions - instant update!
+      const sunData = getSunPosition(newDate, state.observer.latitude, state.observer.longitude);
+      const sunPosition: SunPosition = {
+        ra: sunData.ra,
+        dec: sunData.dec,
+        altitude: sunData.altitude,
+        azimuth: sunData.azimuth,
+        status: sunData.status,
+        safetyWarning: sunData.safetyWarning,
+        isBelowHorizon: sunData.isBelowHorizon,
+      };
+      
+      const moonData = getMoonPosition(newDate, state.observer.latitude, state.observer.longitude);
+      const moonPosition: MoonPosition = {
+        ra: moonData.ra,
+        dec: moonData.dec,
+        altitude: moonData.altitude,
+        azimuth: moonData.azimuth,
+        phaseName: moonData.phaseName as any,
+        illumination: moonData.illumination,
+        magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
+        isBelowHorizon: moonData.isBelowHorizon,
+      };
+      
+      setState(prev => ({
+        ...prev,
+        selectedDate: newDate,
+        currentTime: newDate,
+        isRealTime: false,
+        lst: cached.lst,
+        deepSkyPositions: cached.deepSkyPositions,
+        meteorShowerRadiants: cached.meteorShowerRadiants,
+        sunPosition,
+        moonPosition,
+      }));
+      
+      // Still update sky calculator for star positions (lightweight)
+      if (skyCalculatorRef.current) {
+        skyCalculatorRef.current.setTime(newDate);
+      }
+    } else {
+      // No cache - fall back to throttled updates
+      setState(prev => ({ ...prev, selectedDate: newDate, isRealTime: false }));
+      pendingTimeRef.current = newDate;
+      
+      if (!timeSliderThrottleRef.current) {
+        timeSliderThrottleRef.current = setTimeout(() => {
+          if (pendingTimeRef.current && skyCalculatorRef.current) {
+            skyCalculatorRef.current.setTime(pendingTimeRef.current);
+          }
+          timeSliderThrottleRef.current = null;
+        }, 100);
+      }
+    }
+  }, [state.selectedDate, state.observer, getCachedPositions]);
+
+  // Finalize time when slider is released - ensures final position is calculated
+  const handleTimeSliderRelease = useCallback(() => {
+    // Clear any pending throttle
+    if (timeSliderThrottleRef.current) {
+      clearTimeout(timeSliderThrottleRef.current);
+      timeSliderThrottleRef.current = null;
+    }
+    // Apply the final time immediately
+    if (pendingTimeRef.current && skyCalculatorRef.current) {
+      skyCalculatorRef.current.setTime(pendingTimeRef.current);
+      pendingTimeRef.current = null;
     }
   }, []);
 
@@ -1098,9 +1301,13 @@ export default function Home() {
       if (skyCalculatorRef.current) {
         skyCalculatorRef.current.setTime(newDate);
       }
+      // Rebuild cache for new date if time selector is open
+      if (prev.showTimeSelector && prev.observer) {
+        buildPositionCache(newDate, prev.observer);
+      }
       return { ...prev, selectedDate: newDate, isRealTime: false };
     });
-  }, []);
+  }, [buildPositionCache]);
 
   const resetToNow = useCallback(() => {
     const now = new Date();
@@ -1586,6 +1793,71 @@ export default function Home() {
           }
           
           .light-pollution-slider:focus {
+            outline: none;
+          }
+          
+          /* Time Slider Styles */
+          .time-slider {
+            -webkit-appearance: none;
+            appearance: none;
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.3), rgba(34, 211, 238, 0.3));
+            border-radius: 3px;
+            cursor: pointer;
+          }
+          
+          .time-slider::-webkit-slider-runnable-track {
+            width: 100%;
+            height: 6px;
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.3), rgba(34, 211, 238, 0.3));
+            border-radius: 3px;
+          }
+          
+          .time-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 18px;
+            height: 18px;
+            background: linear-gradient(135deg, #818cf8, #22d3ee);
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.9);
+            margin-top: -6px;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
+          }
+          
+          .time-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 3px 12px rgba(99, 102, 241, 0.7);
+          }
+          
+          .time-slider::-webkit-slider-thumb:active {
+            cursor: grabbing;
+            transform: scale(1.1);
+          }
+          
+          .time-slider::-moz-range-track {
+            width: 100%;
+            height: 6px;
+            background: linear-gradient(90deg, rgba(99, 102, 241, 0.3), rgba(34, 211, 238, 0.3));
+            border-radius: 3px;
+          }
+          
+          .time-slider::-moz-range-thumb {
+            width: 18px;
+            height: 18px;
+            background: linear-gradient(135deg, #818cf8, #22d3ee);
+            border-radius: 50%;
+            cursor: grab;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.5);
+            border: 2px solid rgba(255, 255, 255, 0.9);
+          }
+          
+          .time-slider::-moz-range-thumb:active {
+            cursor: grabbing;
+          }
+          
+          .time-slider:focus {
             outline: none;
           }
           
@@ -2178,31 +2450,33 @@ export default function Home() {
             </div>
           </div>
           
-          {/* Time Controls */}
+          {/* Time Slider */}
           <div style={styles.timeControlGroup}>
-            <span style={styles.timeControlLabel}>Time</span>
-            <div style={styles.timeControlRow}>
-              <button onClick={() => adjustTime(-1)} style={styles.timeAdjustButton}>
-                <ArrowLeft2 size={16} color="currentColor" />
-              </button>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={styles.timeControlLabel}>Time</span>
+              <span style={{ fontSize: '14px', fontWeight: 600, color: '#818cf8' }}>
+                {String(state.selectedDate.getHours()).padStart(2, '0')}:{String(state.selectedDate.getMinutes()).padStart(2, '0')}
+              </span>
+            </div>
+            <div style={styles.timeSliderContainer}>
               <input
-                type="time"
-                value={`${String(state.selectedDate.getHours()).padStart(2, '0')}:${String(state.selectedDate.getMinutes()).padStart(2, '0')}`}
-                onChange={(e) => {
-                  if (e.target.value) {
-                    const timeParts = e.target.value.split(':');
-                    const hours = timeParts[0] || '0';
-                    const minutes = timeParts[1] || '0';
-                    const newDate = new Date(state.selectedDate);
-                    newDate.setHours(parseInt(hours, 10), parseInt(minutes, 10));
-                    setSelectedTime(newDate);
-                  }
-                }}
-                style={styles.timeInput}
+                type="range"
+                min="0"
+                max="1439"
+                value={state.selectedDate.getHours() * 60 + state.selectedDate.getMinutes()}
+                onChange={(e) => handleTimeSliderChange(parseInt(e.target.value, 10))}
+                onMouseUp={handleTimeSliderRelease}
+                onTouchEnd={handleTimeSliderRelease}
+                style={styles.timeSlider}
+                className="time-slider"
               />
-              <button onClick={() => adjustTime(1)} style={styles.timeAdjustButton}>
-                <ArrowRight2 size={16} color="currentColor" />
-              </button>
+              <div style={styles.timeSliderMarks}>
+                <span>00:00</span>
+                <span>06:00</span>
+                <span>12:00</span>
+                <span>18:00</span>
+                <span>24:00</span>
+              </div>
             </div>
           </div>
           
@@ -3541,5 +3815,31 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'linear-gradient(90deg, #22d3ee, #6366f1)',
     borderRadius: '2px',
     transition: 'width 0.3s ease',
+  },
+  
+  // Time Slider Styles
+  timeSliderContainer: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    padding: '4px 0',
+  },
+  timeSlider: {
+    width: '100%',
+    height: '6px',
+    WebkitAppearance: 'none',
+    appearance: 'none',
+    background: 'rgba(255, 255, 255, 0.1)',
+    borderRadius: '3px',
+    outline: 'none',
+    cursor: 'pointer',
+  },
+  timeSliderMarks: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    fontSize: '9px',
+    color: 'rgba(255, 255, 255, 0.4)',
+    fontWeight: 500,
+    padding: '0 2px',
   },
 };
