@@ -1,292 +1,1036 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
-  GeographicCoordinates,
-  Star,
-  Planet,
-  HorizontalCoordinates,
-  createSkyCalculator,
-  createDefaultStarCatalog,
-  createPlanetCalculator,
-  SkyPositions,
-} from '@virtual-window/astronomy-engine';
-import { SensorManager, DeviceOrientation, SensorError } from './src/sensors/sensor-manager';
-import { GeolocationService, LocationStatus } from './src/location/geolocation-service';
-import { SkyView, SkyViewConfig } from './src/components/SkyView';
+  View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
+  ActivityIndicator, Modal, TextInput, FlatList, Animated,
+} from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useFonts } from '@expo-google-fonts/jost';
+import { TenorSans_400Regular } from '@expo-google-fonts/tenor-sans';
+import { AuthProvider, useAuth } from './src/auth/AuthContext';
+import { ContentProvider } from './src/content/ContentContext';
+import { FavoritesProvider, useFavorites } from './src/favorites/FavoritesContext';
+import LoginScreen from './src/auth/LoginScreen';
+import ResetPasswordScreen from './src/auth/ResetPasswordScreen';
+import { supabase as authSupabase } from './src/auth/supabaseClient';
+import {
+  Setting4, Clock, Building,
+  ArrowLeft2, Gps, FingerCricle,
+  Star1, Radar, SearchNormal1, Moon, Heart, Maximize4,
+} from 'iconsax-react-native';
+import type { HorizontalCoordinates } from '@virtual-window/astronomy-engine';
+import { useSkyPointing } from './src/useSkyPointing';
+import SkyRenderer from './src/SkyRenderer';
+import { fovToMagnitude } from './src/stars';
+import { useSkyEngine } from './src/hooks/useSkyEngine';
+import { useTouchGestures } from './src/hooks/useTouchGestures';
+import GlassCard from './src/components/GlassCard';
+import TimeTravelPanel from './src/components/TimeTravelPanel';
+import { CompassReadout, LiveClock } from './src/components/LiveReadouts';
+import ObjectInfoPanel, { SelectedObject } from './src/components/ObjectInfoPanel';
+import ShopScreen from './src/ShopScreen';
+import SupportScreen from './src/SupportScreen';
+import HomeScreen from './src/HomeScreen';
+import SkyCalendarScreen from './src/SkyCalendarScreen';
+import TelescopeScreen from './src/TelescopeScreen';
+import ProductDetailScreen from './src/ProductDetailScreen';
+import CategoryScreen from './src/CategoryScreen';
+import ProfileScreen from './src/ProfileScreen';
+import CalibrateScreen from './src/CalibrateScreen';
+import SettingsPanel from './src/SettingsPanel';
+import FeedbackScreen from './src/FeedbackScreen';
+import SpaceShooterGame from './src/SpaceShooterGame';
+import EventsScreen from './src/EventsScreen';
+import { registerForPushNotifications, scheduleDailySkyNotification, scheduleEventReminders } from './src/notifications/PushNotificationService';
+import * as Notifications from 'expo-notifications';
+import OnboardingScreen from './src/OnboardingScreen';
+import { getConstellation, formatRA, formatDec, formatAzAlt, getSpectralDescription, estimateDistance, SPECTRAL_COLORS } from './src/starInfo';
 
-interface AppState {
-  observer: GeographicCoordinates | null;
-  locationStatus: LocationStatus;
-  stars: Star[];
-  planets: Planet[];
-  starPositions: Map<string, HorizontalCoordinates>;
-  planetPositions: Map<string, HorizontalCoordinates>;
-  viewCenter: HorizontalCoordinates;
-  fov: number;
-  isLoading: boolean;
-  error: string | null;
-  isRealTime: boolean;
-  currentTime: Date;
-}
+const { width: W, height: H } = Dimensions.get('window');
 
-const initialState: AppState = {
-  observer: null,
-  locationStatus: 'pending',
-  stars: [],
-  planets: [],
-  starPositions: new Map(),
-  planetPositions: new Map(),
-  viewCenter: { azimuth: 180, altitude: 45 },
-  fov: 60,
-  isLoading: true,
-  error: null,
-  isRealTime: true,
-  currentTime: new Date(),
+const BORTLE_MAG: Record<number, number> = {
+  1: 7.6, 2: 7.1, 3: 6.6, 4: 6.2, 5: 5.6, 6: 5.1, 7: 4.6, 8: 4.1, 9: 3.5,
 };
 
-export default function App(): React.JSX.Element {
-  const [state, setState] = useState<AppState>(initialState);
-  const sensorManagerRef = useRef<SensorManager | null>(null);
-  const geolocationRef = useRef<GeolocationService | null>(null);
-  const skyCalculatorRef = useRef<ReturnType<typeof createSkyCalculator> | null>(null);
+type Screen = 'home' | 'skywatch' | 'shop' | 'support' | 'product' | 'calendar' | 'telescope' | 'category' | 'profile' | 'feedback' | 'game' | 'events';
 
-  // Handle sensor errors
-  const handleSensorError = useCallback((error: SensorError) => {
-    console.warn('Sensor error:', error.message);
-    if (error.type === 'permission_denied') {
-      Alert.alert('Sensor Permission', error.message);
-    }
-  }, []);
+// ─── Main App Content ────────────────────────────────────────────────────────
 
-  // Handle orientation updates from sensors
-  const handleOrientationChange = useCallback((orientation: DeviceOrientation) => {
-    setState(prev => ({
-      ...prev,
-      viewCenter: {
-        azimuth: orientation.heading,
-        altitude: Math.max(-90, Math.min(90, 90 - orientation.pitch)),
-      },
-    }));
-  }, []);
+function AppContent() {
+  // --- Navigation ---
+  const [currentScreen, setCurrentScreen] = useState<Screen>('home');
+  const [selectedProductHandle, setSelectedProductHandle] = useState<string | null>(null);
+  const [selectedCategory, setSelectedCategory] = useState<{ handle: string; title: string } | null>(null);
+  const screenHistory = useRef<string[]>(['home']);
 
-  // Handle sky position updates
-  const handlePositionsUpdate = useCallback((positions: SkyPositions) => {
-    setState(prev => ({
-      ...prev,
-      starPositions: positions.starPositions,
-      planetPositions: positions.planetPositions,
-      currentTime: positions.timestamp,
-    }));
-  }, []);
-
-  // Initialize app
+  // --- Push Notifications ---
+  const { user } = useAuth();
   useEffect(() => {
-    const init = async () => {
+    if (!user?.id) return;
+    // Register for push and schedule daily sky notification
+    registerForPushNotifications(user.id).then(() => {
+      scheduleDailySkyNotification(19, 0); // 7 PM daily
+    });
+
+    // Schedule event reminders for upcoming sky events
+    (async () => {
       try {
-        // Initialize geolocation
-        geolocationRef.current = new GeolocationService({
-          onStatusChange: (status) => {
-            setState(prev => ({ ...prev, locationStatus: status }));
-          },
-          onError: (error) => {
-            console.warn('Location error:', error.message);
-          },
-        });
+        const { fetchUpcomingEvents } = require('./src/skyEvents');
+        const events = await fetchUpcomingEvents();
+        if (events && events.length > 0) {
+          scheduleEventReminders(events);
+        }
+      } catch {}
+    })();
 
-        const coords = await geolocationRef.current.requestLocation();
-        setState(prev => ({ ...prev, observer: coords }));
-
-        // Initialize star catalog
-        const catalog = createDefaultStarCatalog();
-        await catalog.initialize();
-        const stars = catalog.getStars();
-        
-        // Initialize planet calculator
-        const planetCalc = createPlanetCalculator();
-        const planets = planetCalc.calculatePlanetPositions(new Date(), coords);
-
-        setState(prev => ({ ...prev, stars, planets }));
-
-        // Initialize sky calculator
-        skyCalculatorRef.current = createSkyCalculator({
-          observer: coords,
-          onPositionsUpdate: handlePositionsUpdate,
-        });
-        skyCalculatorRef.current.setStars(stars);
-        skyCalculatorRef.current.setPlanets(planets);
-        skyCalculatorRef.current.startUpdates();
-
-        // Initialize sensors
-        sensorManagerRef.current = new SensorManager({
-          filterAlpha: 0.3,
-          onError: handleSensorError,
-        });
-        await sensorManagerRef.current.initialize();
-        sensorManagerRef.current.onOrientationChange(handleOrientationChange);
-        sensorManagerRef.current.startUpdates(30);
-
-        setState(prev => ({ ...prev, isLoading: false }));
-      } catch (error) {
-        setState(prev => ({
-          ...prev,
-          isLoading: false,
-          error: error instanceof Error ? error.message : 'Initialization failed',
-        }));
+    // Handle notification tap — navigate to sky view or calendar
+    const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      const data = response.notification.request.content.data;
+      if (data?.screen === 'skywatch') {
+        navigateTo('skywatch');
+      } else if (data?.screen === 'calendar') {
+        navigateTo('calendar');
       }
-    };
+    });
+    return () => sub.remove();
+  }, [user?.id]);
 
-    init();
-
-    return () => {
-      sensorManagerRef.current?.stopUpdates();
-      skyCalculatorRef.current?.dispose();
-    };
-  }, [handleSensorError, handleOrientationChange, handlePositionsUpdate]);
-
-  // Handle FOV change from pinch gesture
-  const handleFovChange = useCallback((newFov: number) => {
-    setState(prev => ({ ...prev, fov: newFov }));
-  }, []);
-
-  // Handle star press
-  const handleStarPress = useCallback((star: Star) => {
-    Alert.alert(
-      star.name || 'Unknown Star',
-      `Magnitude: ${star.magnitude.toFixed(2)}\nRA: ${star.ra.toFixed(4)}h\nDec: ${star.dec.toFixed(4)}°\nType: ${star.spectralType}`
-    );
-  }, []);
-
-  // Handle planet press
-  const handlePlanetPress = useCallback((planet: Planet) => {
-    Alert.alert(
-      planet.name,
-      `Magnitude: ${planet.magnitude.toFixed(2)}\nRA: ${planet.ra.toFixed(4)}h\nDec: ${planet.dec.toFixed(4)}°`
-    );
-  }, []);
-
-  // Toggle real-time mode
-  const toggleRealTime = useCallback(() => {
-    if (skyCalculatorRef.current) {
-      if (state.isRealTime) {
-        // Switch to manual time (current time frozen)
-        skyCalculatorRef.current.setTime(new Date());
-      } else {
-        skyCalculatorRef.current.setRealTime();
-      }
-      setState(prev => ({ ...prev, isRealTime: !prev.isRealTime }));
+  const navigateTo = (screen: string) => {
+    screenHistory.current.push(screen);
+    setCurrentScreen(screen as Screen);
+  };
+  const goBack = () => {
+    if (screenHistory.current.length > 1) {
+      screenHistory.current.pop();
+      setCurrentScreen(screenHistory.current[screenHistory.current.length - 1] as Screen);
+    } else {
+      setCurrentScreen('home');
     }
-  }, [state.isRealTime]);
-
-  const skyViewConfig: SkyViewConfig = {
-    fov: state.fov,
-    maxMagnitude: state.fov < 45 ? 6.0 : 5.0,
-    showLabels: true,
-    labelMagnitudeThreshold: 2.0,
   };
 
-  if (state.isLoading) {
+  // --- Settings ---
+  const [bortle, setBortle] = useState(5);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showTimePanel, setShowTimePanel] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchTarget, setSearchTarget] = useState<{ name: string; azimuth: number; altitude: number } | null>(null);
+  const [fov, setFov] = useState(60);
+  const fovRef = useRef(60);
+  const [groundId, setGroundId] = useState('default');
+  const [arMode, setArMode] = useState(true);
+  const [calibrationHold, setCalibrationHold] = useState(false);
+  const [manualAz, setManualAz] = useState(180);
+  const [manualAlt, setManualAlt] = useState(45);
+  const manualAzRef = useRef(180);
+  const manualAltRef = useRef(45);
+  const manualPosRef = useRef({ azimuth: 180, altitude: 45 });
+  const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
+  const [show, setShow] = useState({
+    planets: true, moon: true, sun: true, constellations: true,
+    deepSky: true, satellites: true, meteors: true, labels: true,
+    horizon: true, altGrid: false, azGrid: false, eqGrid: false, milkyWay: true,
+    atmosphere: true, ground: true, constellationBounds: false, redMode: false,
+  });
+
+  // Reset FOV to default every time the sky view becomes active
+  useEffect(() => {
+    if (currentScreen === 'skywatch') {
+      setFov(60);
+      fovRef.current = 60;
+    }
+  }, [currentScreen]);
+  const toggle = (k: keyof typeof show) => setShow(p => ({ ...p, [k]: !p[k] }));
+
+  // --- Sky engine ---
+  const { state: sky, refs: skyRefs, actions: skyActions } = useSkyEngine(bortle);
+  const { pointing, pointingRef: skyRef, recalibrate } = useSkyPointing();
+  const glProjectRef = useRef<((az: number, alt: number, r?: number) => { x: number; y: number } | null) | null>(null);
+  const zoomLoadTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // If the device has no usable motion sensors (or Motion & Fitness permission
+  // was denied), AR mode can't work — fall back to manual so the sky view still
+  // opens and the user can pan by touch instead of being stuck.
+  useEffect(() => {
+    if (pointing.ready && pointing.arAvailable === false && arMode) {
+      setArMode(false);
+    }
+  }, [pointing.ready, pointing.arAvailable, arMode]);
+
+  const limMag = BORTLE_MAG[bortle] ?? 5.6;
+
+  // --- View center ---
+  const viewCenter = useMemo(() => (
+    arMode
+      ? { azimuth: pointing.azimuth, altitude: pointing.altitude }
+      : { azimuth: manualAz, altitude: manualAlt }
+  ), [arMode, pointing.azimuth, pointing.altitude, manualAz, manualAlt]);
+
+  // --- Sun altitude (drives sky/ground lighting) ---
+  const sunAlt = Math.round(skyRefs.sun.current?.altitude ?? -20);
+
+  // --- Touch gestures ---
+  const { handleTouchStart, handleTouchMove, handleTouchEnd } = useTouchGestures({
+    arMode,
+    fovRef,
+    onFovChange: (newFov) => { fovRef.current = newFov; },
+    onPan: (dAz, dAlt) => {
+      manualAzRef.current = ((manualAzRef.current + dAz) % 360 + 360) % 360;
+      manualAltRef.current = Math.max(-90, Math.min(90, manualAltRef.current - dAlt));
+      manualPosRef.current = { azimuth: manualAzRef.current, altitude: manualAltRef.current };
+    },
+    onTap: (x, y) => findNearestObject(x, y),
+    onZoomEnd: () => {
+      if (zoomLoadTimeout.current) clearTimeout(zoomLoadTimeout.current);
+      zoomLoadTimeout.current = setTimeout(() => skyActions.loadStarsForCurrentZoom(fovRef.current), 1500);
+      // Sync refs back to state for UI display
+      setFov(fovRef.current);
+      if (!arMode) {
+        setManualAz(manualAzRef.current);
+        setManualAlt(manualAltRef.current);
+      }
+    },
+  });
+
+  // --- Object detection ---
+  const findNearestObject = useCallback((tapX: number, tapY: number) => {
+    const proj = glProjectRef.current;
+    if (!proj) return;
+
+    const stars = skyRefs.stars.current;
+    const starPos = skyRefs.starPositions.current;
+    const planetPos = skyRefs.planetPositions.current;
+    const maxDist = 30;
+    let best: { dist: number; obj: SelectedObject } | null = null;
+
+    for (const star of stars) {
+      const pos = starPos.get(star.id);
+      if (!pos) continue;
+      const sp = proj(pos.azimuth, pos.altitude, 100);
+      if (!sp) continue;
+      const d = Math.sqrt((sp.x - tapX) ** 2 + (sp.y - tapY) ** 2);
+      if (d < maxDist && (!best || d < best.dist)) {
+        // Easter egg star
+        if (star.id === 'PIE-001') {
+          best = { dist: d, obj: {
+            type: 'Star', name: 'Raagavi',
+            magnitude: star.magnitude, ra: star.ra, dec: star.dec,
+            spectralType: 'M',
+            constellation: 'Independent',
+            extra: 'I built this entire sky — every star, every planet, every pixel you see. And when it came time to name one, there was only one choice.\n\nThis star is for my daughter, Raagavi. She doesn\'t know it yet, but her dad put her name in the cosmos before she could even spell it. One day she\'ll open this app, tap this dot, and realize her old man was kind of cool.\n\nBuilt with mass amounts of coffee and mass amounts of love.\n\nNeed an app built? I do that too. Hit me up.\n— Abhilash\nabhilash@myinstinct.in',
+            azimuth: pos.azimuth, altitude: pos.altitude,
+            spectralDesc: 'Named by her father, who built this sky',
+            spectralColor: '#ffcc6f',
+            raFormatted: '14h 25m 12s', decFormatted: '+28° 42\' 00"',
+            azFormatted: formatAzAlt(pos.azimuth), altFormatted: formatAzAlt(pos.altitude),
+          }};
+        } else {
+          best = { dist: d, obj: {
+            type: 'Star', name: star.name || star.id,
+            magnitude: star.magnitude, ra: star.ra, dec: star.dec,
+            spectralType: star.spectralType,
+            constellation: getConstellation(star.id) ?? undefined,
+            azimuth: pos.azimuth, altitude: pos.altitude,
+            distance: estimateDistance(star.magnitude, star.spectralType) ?? undefined,
+            spectralDesc: getSpectralDescription(star.spectralType),
+            spectralColor: SPECTRAL_COLORS[star.spectralType] ?? '#fff',
+            raFormatted: formatRA(star.ra), decFormatted: formatDec(star.dec),
+            azFormatted: formatAzAlt(pos.azimuth), altFormatted: formatAzAlt(pos.altitude),
+          }};
+        }
+      }
+    }
+
+    for (const planet of skyRefs.planets.current) {
+      const pos = planetPos.get(planet.id);
+      if (!pos) continue;
+      const sp = proj(pos.azimuth, pos.altitude, 97);
+      if (!sp) continue;
+      const d = Math.sqrt((sp.x - tapX) ** 2 + (sp.y - tapY) ** 2);
+      if (d < maxDist && (!best || d < best.dist)) {
+        best = { dist: d, obj: {
+          type: 'Planet', name: planet.name,
+          magnitude: planet.magnitude, ra: planet.ra, dec: planet.dec,
+          azimuth: pos.azimuth, altitude: pos.altitude,
+          raFormatted: formatRA(planet.ra), decFormatted: formatDec(planet.dec),
+          azFormatted: formatAzAlt(pos.azimuth), altFormatted: formatAzAlt(pos.altitude),
+        }};
+      }
+    }
+
+    for (const dso of skyRefs.deepSky.current.values()) {
+      if (!dso.isVisible) continue;
+      const sp = proj(dso.azimuth, dso.altitude, 97);
+      if (!sp) continue;
+      const d = Math.sqrt((sp.x - tapX) ** 2 + (sp.y - tapY) ** 2);
+      if (d < maxDist && (!best || d < best.dist)) {
+        best = { dist: d, obj: {
+          type: 'Deep Sky', name: dso.object.name || dso.object.id,
+          extra: dso.object.type + ' · ' + dso.object.id,
+          azimuth: dso.azimuth, altitude: dso.altitude,
+          azFormatted: formatAzAlt(dso.azimuth), altFormatted: formatAzAlt(dso.altitude),
+        }};
+      }
+    }
+
+    const moon = skyRefs.moon.current;
+    if (moon) {
+      const sp = proj(moon.azimuth, moon.altitude, 97);
+      if (sp) {
+        const d = Math.sqrt((sp.x - tapX) ** 2 + (sp.y - tapY) ** 2);
+        if (d < maxDist && (!best || d < best.dist)) {
+          best = { dist: d, obj: {
+            type: 'Moon', name: 'Moon',
+            extra: `${moon.phaseName} · ${moon.illumination.toFixed(0)}% illuminated`,
+            azimuth: moon.azimuth, altitude: moon.altitude,
+            azFormatted: formatAzAlt(moon.azimuth), altFormatted: formatAzAlt(moon.altitude),
+          }};
+        }
+      }
+    }
+
+    const sun = skyRefs.sun.current;
+    if (sun) {
+      const sp = proj(sun.azimuth, sun.altitude, 97);
+      if (sp) {
+        const d = Math.sqrt((sp.x - tapX) ** 2 + (sp.y - tapY) ** 2);
+        if (d < maxDist && (!best || d < best.dist)) {
+          best = { dist: d, obj: {
+            type: 'Sun', name: 'Sun', extra: sun.status,
+            azimuth: sun.azimuth, altitude: sun.altitude,
+            azFormatted: formatAzAlt(sun.azimuth), altFormatted: formatAzAlt(sun.altitude),
+          }};
+        }
+      }
+    }
+
+    // Check constellation labels (larger tap radius since labels are bigger)
+    const constMaxDist = 50;
+    for (const cl of skyRefs.constellationLabels.current) {
+      const sp = proj(cl.pos.azimuth, cl.pos.altitude, 97);
+      if (!sp) continue;
+      const d = Math.sqrt((sp.x - tapX) ** 2 + (sp.y - tapY) ** 2);
+      if (d < constMaxDist && (!best || d < best.dist)) {
+        best = { dist: d, obj: {
+          type: 'Constellation', name: cl.name,
+          constellation: cl.name,
+          azimuth: cl.pos.azimuth, altitude: cl.pos.altitude,
+          azFormatted: formatAzAlt(cl.pos.azimuth), altFormatted: formatAzAlt(cl.pos.altitude),
+        }};
+      }
+    }
+
+    setSelectedObject(best?.obj ?? null);
+  }, []);
+
+  // ─── Screen routing ──────────────────────────────────────────────────────────
+
+  if (currentScreen === 'home') {
     return (
-      <View style={styles.container}>
-        <Text style={styles.loadingText}>Loading Virtual Window...</Text>
+      <HomeScreen
+        onNavigate={(screen) => {
+          if (screen === 'skywatch') { recalibrate(); setCalibrationHold(true); setTimeout(() => setCalibrationHold(false), 3000); }
+          navigateTo(screen);
+        }}
+        onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }}
+        onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }}
+        onSearchObject={(target) => {
+          setSearchTarget(target);
+          recalibrate();
+          setCalibrationHold(true);
+          setTimeout(() => setCalibrationHold(false), 3000);
+          navigateTo('skywatch');
+        }}
+        observer={skyRefs.coords.current}
+      />
+    );
+  }
+  if (currentScreen === 'calendar') return <SkyCalendarScreen observer={skyRefs.coords.current} onClose={goBack} />;
+  if (currentScreen === 'telescope') return <TelescopeScreen observer={skyRefs.coords.current} onClose={goBack} />;
+  if (currentScreen === 'product' && selectedProductHandle) return <ProductDetailScreen handle={selectedProductHandle} onClose={goBack} />;
+  if (currentScreen === 'category' && selectedCategory) return <CategoryScreen collectionHandle={selectedCategory.handle} title={selectedCategory.title} onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} />;
+  if (currentScreen === 'shop') return <ShopScreen onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} />;
+  if (currentScreen === 'support') return <SupportScreen onClose={goBack} />;
+  if (currentScreen === 'feedback') return <FeedbackScreen onClose={goBack} />;
+  if (currentScreen === 'events') return <EventsScreen onClose={goBack} />;
+  if (currentScreen === 'game') return <SpaceShooterGame onClose={goBack} />;
+  if (currentScreen === 'profile') return <ProfileScreen onClose={goBack} />;
+
+  // --- Loading / error states ---
+  if (sky.error) return <View style={s.center}><Text style={s.err}>{sky.error}</Text></View>;
+  if (!sky.ready) return <View style={s.center}><Star1 size={48} color="#d4c5a0" variant="Bulk" /><Text style={s.loadSub}>{sky.loadMsg}</Text></View>;
+  if (!pointing.ready) return <View style={s.center}><Radar size={48} color="#d4c5a0" variant="Bulk" /><Text style={s.loadSub}>Waiting for sensors…</Text></View>;
+  // Skip the compass-calibration screen entirely when AR isn't available —
+  // manual mode needs no calibration.
+  if (pointing.arAvailable !== false && (!pointing.calibrated || calibrationHold)) return <CalibrateScreen />;
+  if (showSettings) return <SettingsPanel bortle={bortle} setBortle={b => setBortle(Math.max(1, Math.min(9, b)))} show={show} toggle={toggle} groundId={groundId} setGroundId={setGroundId} onClose={() => setShowSettings(false)} />;
+
+  // ─── Sky View ────────────────────────────────────────────────────────────────
+
+  const constSegs = skyRefs.constellationSegments.current.map(seg => ({ start: seg.start, end: seg.end }));
+
+  return (
+    <View style={s.root}>
+      {/* Three.js sky renderer */}
+      <SkyRenderer
+        azimuth={viewCenter.azimuth}
+        altitude={viewCenter.altitude}
+        fov={fov}
+        fovRef={fovRef}
+        pointingRef={skyRef}
+        manualPosRef={manualPosRef}
+        arMode={arMode}
+        projectRef={glProjectRef}
+        stars={skyRefs.stars.current}
+        starPositions={skyRefs.starPositions.current}
+        planets={skyRefs.planets.current}
+        planetPositions={skyRefs.planetPositions.current}
+        moonPosition={skyRefs.moon.current}
+        sunPosition={skyRefs.sun.current}
+        deepSkyPositions={skyRefs.deepSky.current}
+        satellitePositions={skyRefs.satellites.current}
+        sunAltitude={sunAlt}
+        constellationSegments={constSegs}
+        constellationLabels={skyRefs.constellationLabels.current}
+        dataVersion={sky.skyVer}
+        showAtmosphere={show.atmosphere}
+        showGround={show.ground}
+        showLayers={show}
+        selectedConstellationId={selectedObject?.constellation ?? null}
+        lst={skyRefs.lst.current}
+        observerLatitude={skyRefs.coords.current.latitude}
+        redMode={show.redMode ?? false}
+        groundId={groundId}
+      />
+
+      {/* Touch overlay */}
+      <View
+        style={StyleSheet.absoluteFill}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        pointerEvents="box-only"
+      />
+
+      {/* Red night mode — handled entirely in GL renderer */}
+
+      {/* Pie Matrix logo */}
+      <View style={[s.logo, show.redMode && { backgroundColor: 'rgba(60,0,0,0.9)' }]}>
+        <Image source={require('./assets/pie-logo.png')} style={{ width: 36, height: 36, tintColor: show.redMode ? '#ff4444' : undefined } as any} resizeMode="contain" />
+      </View>
+
+      {/* Top bar */}
+      <View style={s.topBar}>
+        <TouchableOpacity onPress={goBack}>
+          <GlassCard style={s.backBtn} intensity={20} borderRadius={19}>
+            <View style={s.backBtnInner}>
+              <ArrowLeft2 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Linear" />
+            </View>
+          </GlassCard>
+        </TouchableOpacity>
+        <View style={s.topBarCenter}>
+          <CompassReadout
+            pointingRef={skyRef}
+            manualPosRef={manualPosRef}
+            arMode={arMode}
+            loadingStars={sky.loadingStars}
+            redMode={show.redMode}
+          />
+        </View>
+      </View>
+
+      {/* Bottom info bar */}
+      <GlassCard style={s.bottomBar} intensity={25} borderRadius={0}>
+        <View style={s.bottomBarInner}>
+          <View style={s.infoRow}>
+            <TouchableOpacity style={s.infoGroup} onPress={() => setShowTimePanel(!showTimePanel)}>
+              <Clock size={16} color={show.redMode ? '#ff4444' : showTimePanel ? '#d4c5a0' : 'rgba(255,255,255,0.5)'} variant="Bulk" />
+              <LiveClock timeRef={skyRefs.displayTime} isRealTime={sky.isRealTime} redMode={show.redMode} />
+            </TouchableOpacity>
+            <TouchableOpacity style={s.infoGroup} onPress={() => setShowSettings(true)}>
+              <Building size={16} color={show.redMode ? '#ff4444' : 'rgba(255,255,255,0.5)'} variant="Bulk" />
+              <View>
+                <Text style={[s.infoVal, show.redMode && { color: '#ff4444' }]}>Bortle {bortle}</Text>
+                <Text style={[s.infoSub, show.redMode && { color: '#991111' }]}>mag {limMag.toFixed(1)}</Text>
+              </View>
+            </TouchableOpacity>
+            <View style={s.infoGroup}>
+              <Maximize4 size={16} color={show.redMode ? '#ff4444' : 'rgba(255,255,255,0.5)'} variant="Bulk" />
+              <View>
+                <Text style={[s.infoVal, show.redMode && { color: '#ff4444' }]}>FOV {fov < 10 ? fov.toFixed(1) : Math.round(fov)}°</Text>
+                <Text style={[s.infoSub, show.redMode && { color: '#991111' }]}>mag {limMag.toFixed(1)}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+      </GlassCard>
+
+      {/* Time travel panel */}
+      {showTimePanel && (
+        <TimeTravelPanel
+          displayTime={sky.displayTime}
+          isRealTime={sky.isRealTime}
+          onAdjustHours={skyActions.adjustHours}
+          onAdjustDays={skyActions.adjustDays}
+          onGoLive={skyActions.goLive}
+          onClose={() => setShowTimePanel(false)}
+        />
+      )}
+
+      {/* FAB — right side */}
+      <View style={s.fab}>
+        <TouchableOpacity style={s.fabBtn} onPress={() => setShowSearch(true)}>
+          <SearchNormal1 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Linear" />
+        </TouchableOpacity>
+        <TouchableOpacity style={[s.fabBtn, show.redMode && s.fabRed]} onPress={() => toggle('redMode' as any)}>
+          <Moon size={20} color={show.redMode ? '#ff4444' : '#fff'} variant={show.redMode ? 'Bold' : 'Linear'} />
+        </TouchableOpacity>
+        <TouchableOpacity style={s.fabBtn} onPress={() => setShowSettings(true)}>
+          <Setting4 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Bulk" />
+        </TouchableOpacity>
+        {pointing.arAvailable !== false && (
+        <TouchableOpacity
+          style={[s.fabBtn, !arMode && s.fabActive]}
+          onPress={() => {
+            setArMode(prev => {
+              if (prev) {
+                setManualAz(pointing.azimuth); setManualAlt(pointing.altitude);
+                manualAzRef.current = pointing.azimuth;
+                manualAltRef.current = pointing.altitude;
+                manualPosRef.current = { azimuth: pointing.azimuth, altitude: pointing.altitude };
+              }
+              return !prev;
+            });
+          }}
+        >
+          {arMode ? <Gps size={20} color={show.redMode ? '#ff4444' : '#22c55e'} variant="Bulk" /> : <FingerCricle size={20} color={show.redMode ? '#ff4444' : '#d4c5a0'} variant="Bulk" />}
+        </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Object info panel */}
+      {selectedObject && (
+        <ObjectInfoPanel object={selectedObject} onClose={() => setSelectedObject(null)} />
+      )}
+
+      {/* Search targeting reticle */}
+      {searchTarget && (
+        <SearchReticle
+          target={searchTarget}
+          viewCenter={viewCenter}
+          projectRef={glProjectRef}
+          onCancel={() => setSearchTarget(null)}
+        />
+      )}
+
+      {/* Search modal */}
+      {showSearch && (
+        <SearchModal
+          stars={skyRefs.stars.current}
+          planets={skyRefs.planets.current}
+          constellationLabels={skyRefs.constellationLabels.current}
+          starPositions={skyRefs.starPositions.current}
+          planetPositions={skyRefs.planetPositions.current}
+          moon={skyRefs.moon.current}
+          sun={skyRefs.sun.current}
+          deepSky={skyRefs.deepSky.current}
+          onSelect={(target) => {
+            setSearchTarget(target);
+            setShowSearch(false);
+          }}
+          onClose={() => setShowSearch(false)}
+        />
+      )}
+    </View>
+  );
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function cardinal(az: number): string {
+  const d = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  return d[Math.round(az / 45) % 8] ?? 'N';
+}
+
+// ─── Search Components ───────────────────────────────────────────────────────
+
+function SearchModal({ stars, planets, constellationLabels, starPositions, planetPositions, moon, sun, deepSky, onSelect, onClose }: {
+  stars: any[]; planets: any[]; constellationLabels: any[];
+  starPositions: Map<string, any>; planetPositions: Map<string, any>;
+  moon: any; sun: any; deepSky: Map<string, any>;
+  onSelect: (target: { name: string; azimuth: number; altitude: number }) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = React.useState('');
+  const { favorites } = useFavorites();
+
+  const results = React.useMemo(() => {
+    const q = query.toLowerCase().trim();
+    const items: Array<{ name: string; type: string; azimuth: number; altitude: number; isFav?: boolean }> = [];
+
+    // Sun
+    if (sun && (q === '' || 'sun'.includes(q))) {
+      items.push({ name: 'Sun', type: 'Sun', azimuth: sun.azimuth, altitude: sun.altitude });
+    }
+
+    // Moon
+    if (moon && (q === '' || 'moon'.includes(q))) {
+      items.push({ name: 'Moon', type: 'Moon', azimuth: moon.azimuth, altitude: moon.altitude });
+    }
+
+    // Planets
+    for (const p of planets) {
+      const pos = planetPositions.get(p.id);
+      if (pos && (q === '' || p.name.toLowerCase().includes(q))) {
+        items.push({ name: p.name, type: 'Planet', azimuth: pos.azimuth, altitude: pos.altitude });
+      }
+    }
+
+    // Deep sky objects
+    if (deepSky) {
+      for (const dso of deepSky.values()) {
+        if (!dso.isVisible) continue;
+        const name = dso.object.name || dso.object.id;
+        if (q === '' ? dso.object.magnitude < 6 : name.toLowerCase().includes(q) || dso.object.id.toLowerCase().includes(q)) {
+          items.push({ name, type: dso.object.type, azimuth: dso.azimuth, altitude: dso.altitude });
+        }
+      }
+    }
+
+    // Named stars (bright ones by default, all when searching)
+    for (const star of stars) {
+      if (star.name && (q === '' ? star.magnitude < 2.0 : star.name.toLowerCase().includes(q))) {
+        const pos = starPositions.get(star.id);
+        if (pos) items.push({ name: star.name, type: 'Star', azimuth: pos.azimuth, altitude: pos.altitude });
+      }
+    }
+
+    // Constellations
+    for (const c of constellationLabels) {
+      if (q === '' || c.name.toLowerCase().includes(q)) {
+        items.push({ name: c.name, type: 'Constellation', azimuth: c.pos.azimuth, altitude: c.pos.altitude });
+      }
+    }
+
+    return items.slice(0, 30);
+  }, [query, stars, planets, constellationLabels, moon, sun, deepSky]);
+
+  // Build favorites that are currently in the sky (have live positions)
+  const favResults = React.useMemo(() => {
+    if (favorites.length === 0) return [];
+    const favItems: Array<{ name: string; type: string; azimuth: number; altitude: number; isFav: boolean }> = [];
+    const favNames = new Set(favorites.map(f => f.name.toLowerCase()));
+
+    // Check planets
+    for (const p of planets) {
+      if (favNames.has(p.name.toLowerCase())) {
+        const pos = planetPositions.get(p.id);
+        if (pos) favItems.push({ name: p.name, type: 'Planet', azimuth: pos.azimuth, altitude: pos.altitude, isFav: true });
+      }
+    }
+
+    // Check sun/moon
+    if (sun && favNames.has('sun')) {
+      favItems.push({ name: 'Sun', type: 'Sun', azimuth: sun.azimuth, altitude: sun.altitude, isFav: true });
+    }
+    if (moon && favNames.has('moon')) {
+      favItems.push({ name: 'Moon', type: 'Moon', azimuth: moon.azimuth, altitude: moon.altitude, isFav: true });
+    }
+
+    // Check deep sky
+    if (deepSky) {
+      for (const dso of deepSky.values()) {
+        const name = dso.object.name || dso.object.id;
+        if (favNames.has(name.toLowerCase())) {
+          favItems.push({ name, type: dso.object.type, azimuth: dso.azimuth, altitude: dso.altitude, isFav: true });
+        }
+      }
+    }
+
+    // Check stars
+    for (const star of stars) {
+      if (star.name && favNames.has(star.name.toLowerCase())) {
+        const pos = starPositions.get(star.id);
+        if (pos) favItems.push({ name: star.name, type: 'Star', azimuth: pos.azimuth, altitude: pos.altitude, isFav: true });
+      }
+    }
+
+    // Check constellations
+    for (const c of constellationLabels) {
+      if (favNames.has(c.name.toLowerCase())) {
+        favItems.push({ name: c.name, type: 'Constellation', azimuth: c.pos.azimuth, altitude: c.pos.altitude, isFav: true });
+      }
+    }
+
+    // Also include favorites that aren't currently visible (no position) so user knows they're saved
+    for (const fav of favorites) {
+      if (!favItems.some(fi => fi.name.toLowerCase() === fav.name.toLowerCase())) {
+        favItems.push({ name: fav.name, type: fav.type, azimuth: 0, altitude: -90, isFav: true });
+      }
+    }
+
+    return favItems;
+  }, [favorites, planets, planetPositions, moon, sun, deepSky, stars, starPositions, constellationLabels]);
+
+  // Filter favorites by query too
+  const filteredFavs = React.useMemo(() => {
+    if (query.trim() === '') return favResults;
+    const q = query.toLowerCase().trim();
+    return favResults.filter(f => f.name.toLowerCase().includes(q));
+  }, [favResults, query]);
+
+  // Remove favorites from main results to avoid duplicates
+  const filteredResults = React.useMemo(() => {
+    const favNameSet = new Set(filteredFavs.map(f => f.name.toLowerCase()));
+    return results.filter(r => !favNameSet.has(r.name.toLowerCase()));
+  }, [results, filteredFavs]);
+
+  return (
+    <Modal visible transparent animationType="slide" onRequestClose={onClose}>
+      <View style={searchStyles.overlay}>
+        <View style={searchStyles.container}>
+          <View style={searchStyles.header}>
+            <TextInput
+              style={searchStyles.input}
+              placeholder="Search stars, planets, constellations..."
+              placeholderTextColor="rgba(255,255,255,0.3)"
+              value={query}
+              onChangeText={setQuery}
+              autoFocus
+            />
+            <TouchableOpacity onPress={onClose} style={searchStyles.cancelBtn}>
+              <Text style={searchStyles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+          <FlatList
+            data={[
+              ...(filteredFavs.length > 0 ? [{ __section: 'favorites' } as any] : []),
+              ...filteredFavs,
+              ...(filteredFavs.length > 0 && filteredResults.length > 0 ? [{ __section: 'suggestions' } as any] : []),
+              ...filteredResults,
+            ]}
+            keyExtractor={(item, i) => item.__section ? `section-${item.__section}` : `${item.name}-${i}`}
+            renderItem={({ item }) => {
+              // Section headers
+              if (item.__section) {
+                return (
+                  <View style={searchStyles.sectionHeader}>
+                    {item.__section === 'favorites' && <Heart size={14} color="#ef4444" variant="Bold" />}
+                    <Text style={searchStyles.sectionTitle}>
+                      {item.__section === 'favorites' ? 'Favorites' : 'Suggestions'}
+                    </Text>
+                  </View>
+                );
+              }
+              const belowHorizon = item.altitude < 0;
+              return (
+                <TouchableOpacity
+                  style={[searchStyles.resultRow, belowHorizon && { opacity: 0.45 }]}
+                  onPress={() => !belowHorizon && onSelect(item)}
+                  disabled={belowHorizon}
+                >
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flex: 1 }}>
+                    {item.isFav && <Heart size={14} color="#ef4444" variant="Bold" />}
+                    <View style={{ flex: 1 }}>
+                      <Text style={searchStyles.resultName}>{item.name}</Text>
+                      <Text style={searchStyles.resultType}>
+                        {item.type} · {belowHorizon ? 'Below horizon' : `Alt ${item.altitude.toFixed(0)}°`}
+                      </Text>
+                    </View>
+                  </View>
+                  {!belowHorizon && <Text style={searchStyles.arrow}>→</Text>}
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={query.length > 0 ? (
+              <Text style={searchStyles.empty}>No results found</Text>
+            ) : (
+              <Text style={searchStyles.empty}>Type to search the sky</Text>
+            )}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
+function SearchReticle({ target, viewCenter, projectRef, onCancel }: {
+  target: { name: string; azimuth: number; altitude: number };
+  viewCenter: { azimuth: number; altitude: number };
+  projectRef: React.MutableRefObject<any>;
+  onCancel: () => void;
+}) {
+  const pulseAnim = React.useRef(new Animated.Value(0)).current;
+  const scaleAnim = React.useRef(new Animated.Value(1)).current;
+
+  React.useEffect(() => {
+    Animated.loop(Animated.sequence([
+      Animated.timing(pulseAnim, { toValue: 1, duration: 1500, useNativeDriver: true }),
+      Animated.timing(pulseAnim, { toValue: 0, duration: 1500, useNativeDriver: true }),
+    ])).start();
+  }, []);
+
+  // Angular distance from view center to target
+  let dAz = target.azimuth - viewCenter.azimuth;
+  if (dAz > 180) dAz -= 360;
+  if (dAz < -180) dAz += 360;
+  const dAlt = target.altitude - viewCenter.altitude;
+  const angularDist = Math.sqrt(dAz * dAz + dAlt * dAlt);
+  const isFound = angularDist < 3;
+
+  // Smoothly animate circle scale (base size is 240, scale 0.25–1.0)
+  const targetScale = isFound ? 0.25 : Math.max(0.25, Math.min(1.0, angularDist / 60));
+  React.useEffect(() => {
+    Animated.spring(scaleAnim, { toValue: targetScale, friction: 12, tension: 40, useNativeDriver: true }).start();
+  }, [Math.round(targetScale * 20)]);
+
+  // Direction angle (radians) from center to target
+  const dirAngle = Math.atan2(-dAlt, dAz);
+  const dynamicRadius = targetScale * 120; // visual radius for arrow positioning
+  const arrowX = Math.cos(dirAngle) * dynamicRadius;
+  const arrowY = Math.sin(dirAngle) * dynamicRadius;
+  const arrowRotation = (dirAngle * 180 / Math.PI) + 90;
+
+  // Compute where the target dot should appear
+  const scale = dynamicRadius / 30;
+  const dotX = W / 2 + dAz * scale;
+  const dotY = H / 2 - dAlt * scale;
+  const dotInCircle = Math.sqrt((dotX - W / 2) ** 2 + (dotY - H / 2) ** 2) < dynamicRadius;
+
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {/* Large centered viewfinder circle */}
+      <View style={searchStyles.viewfinder}>
+        <Animated.View style={[searchStyles.circle, {
+          borderColor: isFound ? '#4ade80' : 'rgba(255,255,255,0.35)',
+          transform: [
+            { scale: Animated.multiply(scaleAnim, pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 1.03] })) },
+          ],
+        }]}>
+          {/* Degree text in center */}
+          <Text style={[searchStyles.degreeText, isFound && { color: '#4ade80' }]}>
+            {isFound ? '✓' : `${Math.round(angularDist)}°`}
+          </Text>
+        </Animated.View>
+
+        {/* Target dot — moves within the circle as you get closer */}
+        {dotInCircle && !isFound && (
+          <View style={[searchStyles.targetDot, { left: dotX - 6, top: dotY - 6 }]} />
+        )}
+
+        {/* Crosshair lines */}
+        <View style={searchStyles.crossH} />
+        <View style={searchStyles.crossV} />
+
+        {/* Direction arrow on circle edge — points toward target */}
+        {!isFound && angularDist > 5 && (
+          <View style={[searchStyles.arrowWrap, {
+            transform: [
+              { translateX: arrowX },
+              { translateY: arrowY },
+              { rotate: `${arrowRotation}deg` },
+            ],
+          }]}>
+            <View style={searchStyles.arrowTriangle} />
+          </View>
+        )}
+      </View>
+
+      {/* Top info bar */}
+      <View style={searchStyles.reticleHeader}>
+        <View style={searchStyles.targetPill}>
+          <Text style={searchStyles.targetName}>{target.name}</Text>
+          <Text style={searchStyles.targetDist}>
+            {isFound ? 'Object found' : `${Math.round(angularDist)}° away`}
+          </Text>
+        </View>
+        <TouchableOpacity onPress={onCancel} style={searchStyles.reticleCancel}>
+          <Text style={searchStyles.reticleCancelText}>✕</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Found banner */}
+      {isFound && (
+        <View style={searchStyles.foundBanner}>
+          <Text style={searchStyles.foundText}>✓ {target.name}</Text>
+        </View>
+      )}
+    </View>
+  );
+}
+
+const searchStyles = StyleSheet.create({
+  // Modal
+  overlay: { flex: 1, backgroundColor: 'rgba(3,3,8,0.95)' },
+  container: { flex: 1, paddingTop: 60 },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 12, marginBottom: 16 },
+  input: { flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 14, paddingHorizontal: 16, paddingVertical: 14, color: '#fff', fontSize: 15, fontFamily: 'Poppins-Regular', borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
+  cancelBtn: { paddingVertical: 10, paddingHorizontal: 4 },
+  cancelText: { color: '#d4c5a0', fontSize: 14, fontFamily: 'Poppins-Bold' },
+  resultRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 20, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
+  resultName: { color: '#fff', fontSize: 15, fontFamily: 'Poppins-Regular' },
+  resultType: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: 'Poppins-Light', marginTop: 2 },
+  arrow: { color: '#d4c5a0', fontSize: 18 },
+  empty: { color: 'rgba(255,255,255,0.3)', fontSize: 14, textAlign: 'center', marginTop: 40, fontFamily: 'Poppins-Light' },
+  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 20, paddingTop: 16, paddingBottom: 8 },
+  sectionTitle: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontFamily: 'Poppins-Bold', letterSpacing: 1, textTransform: 'uppercase' },
+
+  // Reticle — centered viewfinder
+  viewfinder: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center' },
+  circle: { width: 240, height: 240, borderRadius: 120, borderWidth: 2, justifyContent: 'center', alignItems: 'center' },
+  degreeText: { color: 'rgba(255,255,255,0.6)', fontSize: 28, fontWeight: '300', fontFamily: 'Poppins-Light' },
+  targetDot: { position: 'absolute', width: 12, height: 12, borderRadius: 6, backgroundColor: '#d4c5a0', shadowColor: '#d4c5a0', shadowOpacity: 0.8, shadowRadius: 4 },
+  crossH: { position: 'absolute', width: 20, height: 1, backgroundColor: 'rgba(255,255,255,0.2)' },
+  crossV: { position: 'absolute', width: 1, height: 20, backgroundColor: 'rgba(255,255,255,0.2)' },
+  arrowWrap: { position: 'absolute' },
+  arrowTriangle: { width: 0, height: 0, borderLeftWidth: 6, borderRightWidth: 6, borderBottomWidth: 12, borderLeftColor: 'transparent', borderRightColor: 'transparent', borderBottomColor: '#d4c5a0' },
+  reticleHeader: { position: 'absolute', top: 110, left: 14, right: 14, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  targetPill: { backgroundColor: 'rgba(10,10,20,0.8)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(212,197,160,0.3)' },
+  targetName: { color: '#d4c5a0', fontSize: 13, fontFamily: 'Poppins-Bold' },
+  targetDist: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontFamily: 'Poppins-Light', marginTop: 2 },
+  reticleCancel: { width: 36, height: 36, borderRadius: 18, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
+  reticleCancelText: { color: '#fff', fontSize: 16 },
+  foundBanner: { position: 'absolute', bottom: 120, left: 0, right: 0, alignItems: 'center' },
+  foundText: { color: '#4ade80', fontSize: 16, fontFamily: 'Poppins-Bold', backgroundColor: 'rgba(74,222,128,0.1)', paddingHorizontal: 20, paddingVertical: 10, borderRadius: 20, overflow: 'hidden' },
+});
+
+// ─── Auth Gate ───────────────────────────────────────────────────────────────
+
+function AuthGate() {
+  const { user, loading, passwordRecovery } = useAuth();
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+  const [checkingProfile, setCheckingProfile] = useState(false);
+
+  useEffect(() => {
+    if (!user) { setOnboardingDone(null); return; }
+    // Check if onboarding is complete
+    setCheckingProfile(true);
+    (async () => {
+      try {
+        const { data, error } = await authSupabase
+          .from('user_profiles')
+          .select('onboarding_complete')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (error) {
+          setOnboardingDone(false);
+        } else {
+          setOnboardingDone(data?.onboarding_complete === true);
+        }
+      } catch (e: any) {
+        setOnboardingDone(false);
+      } finally {
+        setCheckingProfile(false);
+      }
+    })();
+  }, [user?.id]);
+
+  // Show branded loading screen
+  if (loading || (user && onboardingDone === null && checkingProfile)) {
+    return (
+      <View style={s.center}>
+        <Star1 size={48} color="#d4c5a0" variant="Bulk" />
+        <ActivityIndicator size="small" color="#d4c5a0" style={{ marginTop: 16 }} />
       </View>
     );
   }
+  // Password recovery flow
+  if (passwordRecovery && user) return <ResetPasswordScreen />;
+  if (!user) return <LoginScreen />;
+  // Show onboarding for ALL users (social + email) if not completed
+  if (onboardingDone === false) return <OnboardingScreen onComplete={() => setOnboardingDone(true)} />;
+  return <AppContent />;
+}
 
-  if (state.error) {
+export default function App() {
+  const [fontsLoaded] = useFonts({
+    TenorSans_400Regular,
+  });
+
+  // Hold the UI until the display fonts are ready so titles don't
+  // flash in a fallback face. Poppins (body) is bundled natively.
+  if (!fontsLoaded) {
     return (
-      <View style={styles.container}>
-        <Text style={styles.errorText}>Error: {state.error}</Text>
+      <View style={s.center}>
+        <Star1 size={48} color="#d4c5a0" variant="Bulk" />
+        <ActivityIndicator size="small" color="#d4c5a0" style={{ marginTop: 16 }} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
-      <SkyView
-        stars={state.stars}
-        planets={state.planets}
-        starPositions={state.starPositions}
-        planetPositions={state.planetPositions}
-        viewCenter={state.viewCenter}
-        config={skyViewConfig}
-        onStarPress={handleStarPress}
-        onPlanetPress={handlePlanetPress}
-        onFovChange={handleFovChange}
-      />
-      
-      {/* Status bar */}
-      <View style={styles.statusBar}>
-        <Text style={styles.statusText}>
-          FOV: {state.fov.toFixed(0)}° | {state.locationStatus}
-        </Text>
-        <TouchableOpacity onPress={toggleRealTime} style={styles.timeButton}>
-          <Text style={styles.timeButtonText}>
-            {state.isRealTime ? '⏱ Live' : '⏸ Paused'}
-          </Text>
-        </TouchableOpacity>
-      </View>
-      
-      {/* Time display */}
-      <View style={styles.timeDisplay}>
-        <Text style={styles.timeText}>
-          {state.currentTime.toLocaleString()}
-        </Text>
-      </View>
-    </View>
+    <ErrorBoundary>
+      <AuthProvider>
+        <ContentProvider>
+          <FavoritesProvider>
+            <AuthGate />
+          </FavoritesProvider>
+        </ContentProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000011',
-  },
-  loadingText: {
-    color: '#ffffff',
-    fontSize: 18,
-    textAlign: 'center',
-    marginTop: 100,
-  },
-  errorText: {
-    color: '#ff6666',
-    fontSize: 16,
-    textAlign: 'center',
-    marginTop: 100,
-    padding: 20,
-  },
-  statusBar: {
-    position: 'absolute',
-    top: 40,
-    left: 0,
-    right: 0,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 15,
-  },
-  statusText: {
-    color: '#888888',
-    fontSize: 12,
-  },
-  timeButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 15,
-  },
-  timeButtonText: {
-    color: '#ffffff',
-    fontSize: 12,
-  },
-  timeDisplay: {
-    position: 'absolute',
-    bottom: 30,
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-  },
-  timeText: {
-    color: '#888888',
-    fontSize: 14,
-  },
+// Error boundary to catch crashes and show something instead of blank screen
+class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: string }> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error: error.message };
+  }
+  componentDidCatch(error: Error) {
+    console.error('[App Crash]', error);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, backgroundColor: '#030308', justifyContent: 'center', alignItems: 'center', padding: 30 }}>
+          <Text style={{ color: '#ff6666', fontSize: 16, fontWeight: '700', marginBottom: 10 }}>Something went wrong</Text>
+          <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12, textAlign: 'center' }}>{this.state.error}</Text>
+        </View>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// ─── Styles ──────────────────────────────────────────────────────────────────
+
+const s = StyleSheet.create({
+  root: { flex: 1, backgroundColor: '#000011' },
+  center: { flex: 1, backgroundColor: '#000011', justifyContent: 'center', alignItems: 'center' },
+  loadSub: { color: '#888', fontSize: 15, marginTop: 12 },
+  err: { color: '#f66', fontSize: 15, padding: 20, textAlign: 'center' },
+
+  // Logo
+  logo: { position: 'absolute', bottom: 95, left: 14, width: 44, height: 44, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.9)', justifyContent: 'center', alignItems: 'center' },
+
+  // Top bar
+  topBar: { position: 'absolute', top: 54, left: 14, right: 14, flexDirection: 'row', alignItems: 'center' },
+  topBarCenter: { flex: 1, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: 10 },
+  backBtn: { width: 38, height: 38, borderRadius: 19 },
+  backBtnInner: { width: 38, height: 38, justifyContent: 'center', alignItems: 'center' },
+  pill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, gap: 5 },
+  pillBold: { color: '#fff', fontSize: 16, fontWeight: '700', fontFamily: 'Poppins-Bold' },
+  pillLight: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontFamily: 'Poppins-Light' },
+  pillDim: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: 'Poppins-Light' },
+  loadingPill: { backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  loadingText: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
+  modePill: { backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
+  modePillManual: { backgroundColor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.15)' },
+  modeText: { color: 'rgba(255,255,255,0.8)', fontSize: 10, fontWeight: '700' },
+
+  // Bottom bar
+  bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0 },
+  bottomBarInner: { paddingBottom: 34, paddingTop: 10, paddingHorizontal: 12 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
+  infoGroup: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  infoVal: { color: 'rgba(255,255,255,0.85)', fontSize: 13, fontWeight: '600', fontFamily: 'Poppins-Regular' },
+  infoSub: { color: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: 'Poppins-Light' },
+
+  // FAB
+  fab: { position: 'absolute', right: 12, bottom: 110, gap: 10 },
+  fabBtn: { width: 44, height: 44, borderRadius: 22, backgroundColor: 'rgba(10,10,20,0.7)', justifyContent: 'center', alignItems: 'center', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.12)', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 8, elevation: 6 },
+  fabActive: { backgroundColor: 'rgba(20,20,40,0.8)', borderColor: 'rgba(255,255,255,0.2)' },
+  fabRed: { backgroundColor: 'rgba(40,0,0,0.8)', borderColor: 'rgba(255,68,68,0.4)' },
 });

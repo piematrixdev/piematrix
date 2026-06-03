@@ -1,0 +1,42 @@
+# Mobile app (not needed for web deployment)
+apps/mobile/ios/
+apps/mobile/android/
+apps/mobile/assets/
+apps/mobile/credentials/
+apps/mobile/.expo/
+apps/mobile/node_modules/
+
+# Archive file
+Archive.zip
+
+# Binary star catalog files (large, mobile-only)
+apps/mobile/assets/stars/
+
+# Xcode/Android build artifacts
+*.xcarchive
+*.ipa
+*.apk
+*.aab
+*.keystore
+*.jks
+*.p8
+
+# Logs
+*.log
+.expo/
+
+# Cache
+.turbo/
+.cache/
+
+# Documentation (not needed for build)
+*.md
+!README.md
+
+# IDE
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db

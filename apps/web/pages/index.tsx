@@ -273,9 +273,6 @@ export default function Home() {
   const lastDeepSkyUpdateRef = useRef<number>(0);
   const lastMeteorUpdateRef = useRef<number>(0);
   
-<<<<<<< Updated upstream
-  // Handle sky position updates - heavily throttled to reduce re-renders
-=======
   // Build position cache for the current day (runs in background)
   const buildPositionCache = useCallback((date: Date, observer: GeographicCoordinates) => {
     const dateStr = date.toISOString().split('T')[0];
@@ -287,7 +284,7 @@ export default function Home() {
     }
     
     cache.isBuilding = true;
-    cache.date = dateStr;
+    cache.date = dateStr ?? '';
     cache.observer = observer;
     cache.snapshots.clear();
     
@@ -366,8 +363,7 @@ export default function Home() {
     return cache.snapshots.get(clampedMinute) || null;
   }, []);
 
-  // Handle sky position updates - throttle LST updates to reduce re-renders
->>>>>>> Stashed changes
+  // Handle sky position updates - heavily throttled to reduce re-renders
   const handlePositionsUpdate = useCallback((positions: SkyPositions) => {
     setState(prev => {
       if (!prev.observer) return { ...prev, currentTime: positions.timestamp };
@@ -391,6 +387,7 @@ export default function Home() {
         altitude: moonData.altitude,
         azimuth: moonData.azimuth,
         phaseName: moonData.phaseName as any,
+        phaseAngle: (moonData.illumination / 100) * 180,
         illumination: moonData.illumination,
         magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
         isBelowHorizon: moonData.isBelowHorizon,
@@ -682,6 +679,7 @@ export default function Home() {
             azimuth: moonData.azimuth,
             phaseName: moonData.phaseName as any,
             illumination: moonData.illumination,
+        phaseAngle: (moonData.illumination / 100) * 180,
             magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
             isBelowHorizon: moonData.isBelowHorizon,
           };
@@ -712,6 +710,7 @@ export default function Home() {
             azimuth: moonData.azimuth,
             phaseName: moonData.phaseName as any,
             illumination: moonData.illumination,
+        phaseAngle: (moonData.illumination / 100) * 180,
             magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
             isBelowHorizon: moonData.isBelowHorizon,
           };
@@ -822,6 +821,7 @@ export default function Home() {
               azimuth: moonData.azimuth,
               phaseName: moonData.phaseName as any,
               illumination: moonData.illumination,
+        phaseAngle: (moonData.illumination / 100) * 180,
               magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
               isBelowHorizon: moonData.isBelowHorizon,
             };
@@ -1084,6 +1084,7 @@ export default function Home() {
         azimuth: moonData.azimuth,
         phaseName: moonData.phaseName as any,
         illumination: moonData.illumination,
+        phaseAngle: (moonData.illumination / 100) * 180,
         magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
         isBelowHorizon: moonData.isBelowHorizon,
       };
@@ -1235,6 +1236,7 @@ export default function Home() {
         azimuth: moonData.azimuth,
         phaseName: moonData.phaseName as any,
         illumination: moonData.illumination,
+        phaseAngle: (moonData.illumination / 100) * 180,
         magnitude: -12.7 + (1 - moonData.illumination / 100) * 10,
         isBelowHorizon: moonData.isBelowHorizon,
       };

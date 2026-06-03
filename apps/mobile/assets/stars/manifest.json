@@ -1,0 +1,43 @@
+{
+  "format": "skywatch-stars-v1",
+  "recordBytes": 16,
+  "fields": [
+    "ra:f32",
+    "dec:f32",
+    "mag:f32",
+    "spec:u8",
+    "r:u8",
+    "g:u8",
+    "b:u8"
+  ],
+  "tiers": [
+    {
+      "key": "L0",
+      "maxMag": 4,
+      "count": 913,
+      "file": "stars-L0.bin",
+      "bytes": 14608
+    },
+    {
+      "key": "L1",
+      "maxMag": 6.5,
+      "count": 16761,
+      "file": "stars-L1.bin",
+      "bytes": 268176
+    },
+    {
+      "key": "L2",
+      "maxMag": 10,
+      "count": 192179,
+      "file": "stars-L2.bin",
+      "bytes": 3074864
+    },
+    {
+      "key": "L3",
+      "maxMag": 14,
+      "count": 646398,
+      "file": "stars-L3.bin",
+      "bytes": 10342368
+    }
+  ]
+}

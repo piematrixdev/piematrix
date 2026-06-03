@@ -7,6 +7,7 @@
 import { GeographicCoordinates, HorizontalCoordinates, Star, Planet } from './index';
 import { calculateLST } from './lst-calculator';
 import { celestialToHorizontal } from './coordinate-converter';
+import { applyRefraction } from './refraction';
 import { createTimeController, TimeController } from './time-controller';
 import { createHorizonLine, HorizonLine, HorizonPoint } from './horizon-line';
 import { createMoonCalculator, MoonCalculator, MoonPosition } from './moon-calculator';
@@ -43,6 +44,7 @@ export class SkyCalculator {
   private timeController: TimeController;
   private stars: Star[] = [];
   private planets: Planet[] = [];
+  private _cachedStarPositions: Map<string, HorizontalCoordinates> | null = null;
   private onPositionsUpdate: ((positions: SkyPositions) => void) | undefined;
   private updateInterval: ReturnType<typeof setInterval> | null = null;
   private lastPositions: SkyPositions | null = null;
@@ -76,7 +78,8 @@ export class SkyCalculator {
    */
   setStars(stars: Star[]): void {
     this.stars = stars;
-    this.recalculate();
+    this._cachedStarPositions = null; // Force recalculation on next cycle
+    // This prevents blocking the UI during progressive star loading
   }
   
   /**
@@ -131,12 +134,13 @@ export class SkyCalculator {
   startUpdates(): void {
     if (this.updateInterval) return;
     
-    // Update LST at least once per second
+    // Update every 10 seconds — stars move only 0.04° in this time (imperceptible)
+    // This eliminates the every-2-second stutter from recalculating all star positions
     this.updateInterval = setInterval(() => {
       if (this.timeController.isRealTime()) {
         this.recalculate();
       }
-    }, 1000);
+    }, 10000);
     
     // Initial calculation
     this.recalculate();
@@ -156,33 +160,49 @@ export class SkyCalculator {
    * Recalculates all celestial positions
    * Should complete within 100ms
    */
+
+  /**
+   * Recalculate positions. Stars are NEVER recalculated here —
+   * they use equatorial coords with GPU rotation.
+   * Only planets/moon/sun need updates.
+   */
   recalculate(): SkyPositions {
-    const startTime = performance.now();
-    
     const timestamp = this.timeController.getCurrentTime();
     const lst = calculateLST(this.observer.longitude, timestamp);
     
-    const starPositions = new Map<string, HorizontalCoordinates>();
-    const planetPositions = new Map<string, HorizontalCoordinates>();
-    
-    // Calculate star positions
-    for (const star of this.stars) {
-      const horizontal = celestialToHorizontal(
-        { ra: star.ra, dec: star.dec },
-        this.observer,
-        lst
-      );
-      starPositions.set(star.id, horizontal);
+    // Stars: use cached positions (or empty map if never computed)
+    // Star rendering uses equatorial coords + skyGroup rotation, not these positions
+    let starPositions = this._cachedStarPositions;
+    if (!starPositions) {
+      // First time only — compute once for label/tap detection
+      starPositions = new Map<string, HorizontalCoordinates>();
+      for (const star of this.stars) {
+        const horizontal = celestialToHorizontal(
+          { ra: star.ra, dec: star.dec },
+          this.observer,
+          lst
+        );
+        // Apply atmospheric refraction
+        starPositions.set(star.id, {
+          azimuth: horizontal.azimuth,
+          altitude: applyRefraction(horizontal.altitude),
+        });
+      }
+      this._cachedStarPositions = starPositions;
     }
     
-    // Calculate planet positions
+    const planetPositions = new Map<string, HorizontalCoordinates>();
     for (const planet of this.planets) {
       const horizontal = celestialToHorizontal(
         { ra: planet.ra, dec: planet.dec },
         this.observer,
         lst
       );
-      planetPositions.set(planet.id, horizontal);
+      // Apply atmospheric refraction — objects near the horizon appear higher
+      planetPositions.set(planet.id, {
+        azimuth: horizontal.azimuth,
+        altitude: applyRefraction(horizontal.altitude),
+      });
     }
     
     // Get horizon points
@@ -229,11 +249,6 @@ export class SkyCalculator {
     };
     
     this.lastPositions = positions;
-    
-    const elapsed = performance.now() - startTime;
-    if (elapsed > 100) {
-      console.warn(`Sky calculation took ${elapsed.toFixed(1)}ms (target: <100ms)`);
-    }
     
     // Notify listeners
     if (this.onPositionsUpdate) {

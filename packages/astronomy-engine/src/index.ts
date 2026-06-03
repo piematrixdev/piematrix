@@ -232,3 +232,17 @@ export {
   type StarData,
   type StarQueryOptions,
 } from './star-api';
+
+// Atmospheric Refraction exports
+export {
+  refractionCorrection,
+  applyRefraction,
+  removeRefraction,
+} from './refraction';
+
+// Saturn Ring Tilt exports
+export {
+  getSaturnRingTilt,
+  getSaturnRingTiltRad,
+  type SaturnRingInfo,
+} from './saturn-rings';

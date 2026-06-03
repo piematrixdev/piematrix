@@ -1,0 +1,21 @@
+  // --- Three.js rendering ---
+  const stars = starsRef.current;
+  const starPos = starPosRef.current;
+  const constSegs = constRef.current.map(s => ({ start: s.start, end: s.end }));
+
+  return (
+    <View style={s.c}>
+      {/* Three.js sky dome */}
+      <View style={{ flex: 1 }} onTouchStart={handleTouchStart} onTouchMove={handleTouchMove} onTouchEnd={handleTouchEnd}>
+        <SkyRenderer
+          azimuth={viewCenter.azimuth}
+          altitude={viewCenter.altitude}
+          fov={fov}
+          stars={stars}
+          starPositions={starPos}
+          sunAltitude={sunAlt}
+          constellationSegments={constSegs}
+        />
+      </View>
+
+      {/* === Mobile HUD === */}

@@ -3,9 +3,9 @@
   "version": "0.0.1",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_OPTIONS=--max-http-header-size=65536 next dev -p 3030",
     "build": "next build",
-    "start": "next start",
+    "start": "NODE_OPTIONS=--max-http-header-size=65536 next start -p 3030",
     "lint": "next lint",
     "clean": "rm -rf .next out"
   },

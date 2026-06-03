@@ -40,3 +40,25 @@ coverage/
 
 # Vercel
 .vercel
+
+# Mobile credentials
+apps/mobile/credentials/*.keystore
+apps/mobile/credentials/*.jks
+apps/mobile/credentials/README.md
+
+# Signing keys, certs & provisioning profiles (NEVER commit)
+*.p8
+*.cer
+*.mobileprovision
+*.certSigningRequest
+*.keystore
+*.jks
+*.p12
+*.mobilekey
+AuthKey_*.p8
+
+# Build archives
+Archive.zip
+*.ipa
+*.aab
+*.apk

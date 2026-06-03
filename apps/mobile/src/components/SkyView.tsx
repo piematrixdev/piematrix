@@ -5,7 +5,7 @@
 
 import React, { useMemo, useCallback, useRef } from 'react';
 import { View, StyleSheet, Dimensions, GestureResponderEvent } from 'react-native';
-import Svg, { Circle, Text as SvgText, G, Polyline, Line } from 'react-native-svg';
+import Svg, { Circle, Text as SvgText, G, Polyline, Line, Rect, Defs, LinearGradient, Stop } from 'react-native-svg';
 import { Star, Planet, HorizontalCoordinates, SpectralType, HorizonPoint, MoonPosition, SunPosition, LunarPhaseName, ConstellationLineSegment, DeepSkyPosition, DeepSkyObjectType, SatellitePosition, SatelliteTrackerError, MeteorShowerPosition } from '@virtual-window/astronomy-engine';
 import {
   magnitudeToRadius,
@@ -607,20 +607,45 @@ export const SkyView: React.FC<SkyViewProps> = ({
     onPlanetPress?.(planet);
   }, [onPlanetPress]);
   
+  // Compute sky atmosphere colors based on sun altitude
+  const skyColors = useMemo(() => {
+    const alt = sunPosition?.altitude ?? -20;
+    if (alt > 10) {
+      // Full daylight — blue sky
+      return { zenith: '#1a3a6a', mid: '#3a6aaa', horizon: '#8ab4e8' };
+    } else if (alt > 0) {
+      // Low sun — golden hour
+      return { zenith: '#1a2a50', mid: '#4a5a80', horizon: '#d09060' };
+    } else if (alt > -6) {
+      // Civil twilight — orange/purple
+      return { zenith: '#0f1a30', mid: '#2a3550', horizon: '#c08060' };
+    } else if (alt > -12) {
+      // Nautical twilight — deep blue
+      return { zenith: '#080e1a', mid: '#151e30', horizon: '#403050' };
+    } else if (alt > -18) {
+      // Astronomical twilight — very dark blue
+      return { zenith: '#040810', mid: '#0a0f1a', horizon: '#1a1525' };
+    }
+    // Night — near black
+    return { zenith: '#000011', mid: '#000011', horizon: '#0a0a15' };
+  }, [sunPosition?.altitude]);
+
   return (
     <View
       style={styles.container}
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
     >
-      <Svg width={SCREEN_WIDTH} height={SCREEN_HEIGHT} style={styles.svg}>
-        {/* Background */}
-        <Circle
-          cx={SCREEN_WIDTH / 2}
-          cy={SCREEN_HEIGHT / 2}
-          r={Math.max(SCREEN_WIDTH, SCREEN_HEIGHT)}
-          fill="#000011"
-        />
+      <Svg width={SCREEN_WIDTH} height={SCREEN_HEIGHT} style={styles.svg} viewBox={`0 0 ${SCREEN_WIDTH} ${SCREEN_HEIGHT}`}>
+        {/* Sky atmosphere gradient */}
+        <Defs>
+          <LinearGradient id="skyGradient" x1="0" y1="0" x2="0" y2="1">
+            <Stop offset="0" stopColor={skyColors.zenith} stopOpacity="1" />
+            <Stop offset="0.5" stopColor={skyColors.mid} stopOpacity="1" />
+            <Stop offset="1" stopColor={skyColors.horizon} stopOpacity="1" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width={SCREEN_WIDTH} height={SCREEN_HEIGHT} fill="url(#skyGradient)" />
         
         {/* Render horizon line (behind stars and planets) */}
         {renderableHorizonPoints.length > 0 && (

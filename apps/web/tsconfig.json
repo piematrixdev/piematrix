@@ -22,7 +22,8 @@
         "./src/*"
       ]
     },
-    "strictNullChecks": true
+    "strictNullChecks": true,
+    "skipLibCheck": true
   },
   "include": [
     "next-env.d.ts",

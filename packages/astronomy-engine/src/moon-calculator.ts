@@ -42,6 +42,8 @@ export interface MoonPosition {
   phaseName: LunarPhaseName;
   /** Illumination percentage (0-100) */
   illumination: number;
+  /** Phase angle in degrees (0=New, 180=Full) */
+  phaseAngle: number;
   /** Apparent magnitude */
   magnitude: number;
   /** True if altitude < 0 */
@@ -226,6 +228,7 @@ export function createMoonCalculator(): MoonCalculator {
         altitude: horizontal.altitude,
         phaseName,
         illumination,
+        phaseAngle,
         magnitude,
         isBelowHorizon: horizontal.altitude < 0,
       };

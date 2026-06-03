@@ -1,14 +1,31 @@
 /**
- * Sensor Manager for React Native
- * Manages device sensors (magnetometer, accelerometer, gyroscope) for orientation tracking
+ * Sensor Manager for Expo — Gravity + Magnetometer Sky Navigation
+ * 
+ * Expo's DeviceMotion.rotation is NOT anchored to North — it's relative
+ * to an arbitrary reference. So we can't use it for compass heading.
+ * 
+ * Instead, we replicate what Android's SensorManager.getRotationMatrix does:
+ * 1. Use gravity vector (from accelerometer) to determine "down"
+ * 2. Use magnetometer to determine "North"  
+ * 3. Build a rotation matrix from these two vectors
+ * 4. Extract the phone's pointing direction from the rotation matrix
+ * 
+ * This is the same approach used by Google Sky Map (Stardroid).
+ * The rotation matrix maps device coordinates to Earth coordinates:
+ *   Earth: X=East, Y=North, Z=Up
+ *   Device: X=Right, Y=Top, Z=ScreenOut
  */
 
-import { LowPassFilter, Vector3D } from './low-pass-filter';
+import { Accelerometer, Magnetometer } from 'expo-sensors';
+import { Vector3D, LowPassFilter } from './low-pass-filter';
 
 export interface DeviceOrientation {
-  heading: number;  // Yaw: 0-360 degrees
-  pitch: number;    // -90 to +90 degrees
-  roll: number;     // -180 to +180 degrees
+  heading: number;
+  pitch: number;
+  roll: number;
+  azimuth: number;
+  altitude: number;
+  confidence: number;
 }
 
 export type SensorState = 'available' | 'unavailable' | 'denied';
@@ -17,362 +34,278 @@ export interface SensorStatus {
   magnetometer: SensorState;
   accelerometer: SensorState;
   gyroscope: SensorState;
+  deviceMotion: SensorState;
 }
 
 export interface SensorError {
   type: 'permission_denied' | 'sensor_unavailable' | 'initialization_failed';
-  sensor?: 'magnetometer' | 'accelerometer' | 'gyroscope';
+  sensor?: 'magnetometer' | 'accelerometer' | 'gyroscope' | 'deviceMotion' | undefined;
   message: string;
 }
 
 export interface SensorManagerConfig {
-  filterAlpha?: number;  // Default 0.3, constrained to [0.1, 0.5]
+  filterAlpha?: number;
+  fusionConfig?: any;
   onError?: (error: SensorError) => void;
 }
 
 type OrientationCallback = (orientation: DeviceOrientation) => void;
 type ErrorCallback = (error: SensorError) => void;
 
-/**
- * Manages device sensors for orientation tracking
- * Uses low-pass filtering to smooth sensor data
- */
+const RAD_TO_DEG = 180 / Math.PI;
+
 export class SensorManager {
-  private magnetometerFilter: LowPassFilter;
-  private accelerometerFilter: LowPassFilter;
-  private gyroscopeFilter: LowPassFilter;
-  
+  private accelFilter: LowPassFilter;
+  private magFilter: LowPassFilter;
+
   private status: SensorStatus = {
     magnetometer: 'unavailable',
     accelerometer: 'unavailable',
     gyroscope: 'unavailable',
+    deviceMotion: 'unavailable',
   };
-  
+
   private listeners: Set<OrientationCallback> = new Set();
   private errorCallback: ErrorCallback | null = null;
-  private updateInterval: ReturnType<typeof setInterval> | null = null;
   private isRunning = false;
-  
-  // Simulated sensor data (in real RN app, would come from native modules)
-  private lastMagnetometer: Vector3D = { x: 0, y: 0, z: 0 };
-  private lastAccelerometer: Vector3D = { x: 0, y: 0, z: -9.8 };
-  private lastGyroscope: Vector3D = { x: 0, y: 0, z: 0 };
+  private subscriptions: Array<{ remove: () => void }> = [];
+
+  // Latest sensor readings
+  private gravity: Vector3D = { x: 0, y: 0, z: -1 };
+  private mag: Vector3D = { x: 0, y: 0, z: 0 };
+  private hasMag = false;
+
+  // Smoothing
+  private smoothedAzimuth = 0;
+  private smoothedAltitude = 45;
+  private hasFirstReading = false;
+
   private lastValidOrientation: DeviceOrientation | null = null;
-  
+
   constructor(config: SensorManagerConfig = {}) {
-    const alpha = this.constrainAlpha(config.filterAlpha ?? 0.3);
-    this.magnetometerFilter = new LowPassFilter(alpha);
-    this.accelerometerFilter = new LowPassFilter(alpha);
-    this.gyroscopeFilter = new LowPassFilter(alpha);
+    // Use heavier filtering for smoother output
+    this.accelFilter = new LowPassFilter(0.15);
+    this.magFilter = new LowPassFilter(0.1);
     this.errorCallback = config.onError ?? null;
   }
-  
-  /**
-   * Constrains alpha to valid range [0.1, 0.5] for Sensor_Manager
-   */
-  private constrainAlpha(alpha: number): number {
-    return Math.max(0.1, Math.min(0.5, alpha));
-  }
-  
-  /**
-   * Initializes sensors and requests permissions
-   * In a real React Native app, this would use native sensor APIs
-   */
+
   async initialize(): Promise<SensorStatus> {
-    // In a real implementation, this would:
-    // 1. Check if sensors are available on device
-    // 2. Request permissions if needed
-    // 3. Return actual sensor status
-    
-    // For now, simulate available sensors
-    this.status = {
-      magnetometer: 'available',
-      accelerometer: 'available',
-      gyroscope: 'available',
-    };
-    
-    // Check for any denied or unavailable sensors and notify
-    this.checkSensorStatus();
-    
+    const [accelAvail, magAvail] = await Promise.all([
+      Accelerometer.isAvailableAsync().catch(() => false),
+      Magnetometer.isAvailableAsync().catch(() => false),
+    ]);
+    this.status.accelerometer = accelAvail ? 'available' : 'unavailable';
+    this.status.magnetometer = magAvail ? 'available' : 'unavailable';
+
+    if (!accelAvail) {
+      this.emitError({
+        type: 'sensor_unavailable', sensor: 'accelerometer',
+        message: 'Accelerometer unavailable.',
+      });
+    }
+    if (!magAvail) {
+      this.emitError({
+        type: 'sensor_unavailable', sensor: 'magnetometer',
+        message: 'Magnetometer unavailable — cannot determine North.',
+      });
+    }
     return this.status;
   }
-  
-  /**
-   * Checks sensor status and emits appropriate errors
-   */
-  private checkSensorStatus(): void {
-    const sensors: Array<'magnetometer' | 'accelerometer' | 'gyroscope'> = 
-      ['magnetometer', 'accelerometer', 'gyroscope'];
-    
-    for (const sensor of sensors) {
-      if (this.status[sensor] === 'denied') {
-        this.emitError({
-          type: 'permission_denied',
-          sensor,
-          message: `Permission denied for ${sensor}. Please enable in device settings.`,
-        });
-      } else if (this.status[sensor] === 'unavailable') {
-        this.emitError({
-          type: 'sensor_unavailable',
-          sensor,
-          message: `${sensor} is not available on this device.`,
-        });
-      }
-    }
-    
-    // Special handling for magnetometer unavailable
-    if (this.status.magnetometer === 'unavailable' || 
-        this.status.magnetometer === 'denied') {
-      this.emitError({
-        type: 'sensor_unavailable',
-        sensor: 'magnetometer',
-        message: 'Compass unavailable - heading may drift',
+
+  startUpdates(updateRateHz: number = 60): void {
+    if (this.isRunning) return;
+    this.isRunning = true;
+    const intervalMs = Math.floor(1000 / Math.max(30, updateRateHz));
+
+    if (this.status.accelerometer === 'available') {
+      Accelerometer.setUpdateInterval(intervalMs);
+      const sub = Accelerometer.addListener((data) => {
+        // Expo accelerometer returns values in G's (1G ≈ 9.81 m/s²)
+        // When phone is flat face-up: z ≈ -1 (gravity pulling down)
+        this.gravity = this.accelFilter.filter(data);
+        if (this.hasMag) this.computeOrientation();
       });
+      this.subscriptions.push(sub);
     }
-    
-    // Check if all sensors are unavailable
-    if (sensors.every(s => this.status[s] !== 'available')) {
-      this.emitError({
-        type: 'initialization_failed',
-        message: 'All sensors unavailable - using manual navigation',
+
+    if (this.status.magnetometer === 'available') {
+      Magnetometer.setUpdateInterval(intervalMs);
+      const sub = Magnetometer.addListener((data) => {
+        this.mag = this.magFilter.filter(data);
+        this.hasMag = true;
       });
+      this.subscriptions.push(sub);
     }
-  }
-  
-  /**
-   * Emits an error to the error callback
-   */
-  private emitError(error: SensorError): void {
-    if (this.errorCallback) {
-      this.errorCallback(error);
-    }
-  }
-  
-  /**
-   * Sets the error callback
-   */
-  setErrorCallback(callback: ErrorCallback | null): void {
-    this.errorCallback = callback;
-  }
-  
-  /**
-   * Simulates permission denial for testing
-   */
-  simulatePermissionDenied(sensor: 'magnetometer' | 'accelerometer' | 'gyroscope'): void {
-    this.status[sensor] = 'denied';
-    this.emitError({
-      type: 'permission_denied',
-      sensor,
-      message: `Permission denied for ${sensor}. Please enable in device settings.`,
-    });
-  }
-  
-  /**
-   * Simulates sensor unavailability for testing
-   */
-  simulateSensorUnavailable(sensor: 'magnetometer' | 'accelerometer' | 'gyroscope'): void {
-    this.status[sensor] = 'unavailable';
-    this.emitError({
-      type: 'sensor_unavailable',
-      sensor,
-      message: `${sensor} is not available on this device.`,
-    });
   }
 
   /**
-   * Starts sensor updates at specified rate
-   * @param updateRateHz - Update frequency (minimum 30Hz)
+   * Compute orientation from gravity + magnetometer.
+   * Replicates Android's SensorManager.getRotationMatrix().
+   * 
+   * The rotation matrix R transforms device coords to Earth coords:
+   *   Earth: X=East, Y=North, Z=Up
+   * 
+   * For a phone held in portrait (upright, screen facing user):
+   *   The phone's Y axis (top edge) points at the sky
+   *   We extract where the Y axis points in Earth frame = column 1 of R
    */
-  startUpdates(updateRateHz: number = 30): void {
-    if (this.isRunning) return;
-    
-    const hz = Math.max(30, updateRateHz);
-    const intervalMs = Math.floor(1000 / hz);
-    
-    this.isRunning = true;
-    this.updateInterval = setInterval(() => {
-      this.processSensorData();
-    }, intervalMs);
-  }
-  
-  /**
-   * Stops sensor updates
-   */
-  stopUpdates(): void {
-    if (this.updateInterval) {
-      clearInterval(this.updateInterval);
-      this.updateInterval = null;
+  private computeOrientation(): void {
+    const g = this.gravity;
+    const m = this.mag;
+
+    // Normalize gravity (points "down" in device frame)
+    const gLen = Math.sqrt(g.x * g.x + g.y * g.y + g.z * g.z);
+    if (gLen < 0.01) return;
+    // In Expo, gravity when flat face-up: z ≈ -1
+    // We want "up" direction, so negate
+    const upX = -g.x / gLen;
+    const upY = -g.y / gLen;
+    const upZ = -g.z / gLen;
+
+    // East = cross(mag, up) — perpendicular to both magnetic field and gravity
+    let eastX = m.y * upZ - m.z * upY;
+    let eastY = m.z * upX - m.x * upZ;
+    let eastZ = m.x * upY - m.y * upX;
+    const eastLen = Math.sqrt(eastX * eastX + eastY * eastY + eastZ * eastZ);
+    if (eastLen < 0.01) return;
+    eastX /= eastLen;
+    eastY /= eastLen;
+    eastZ /= eastLen;
+
+    // North = cross(up, east) — perpendicular to both up and east
+    const northX = upY * eastZ - upZ * eastY;
+    const northY = upZ * eastX - upX * eastZ;
+    const northZ = upX * eastY - upY * eastX;
+
+    // Rotation matrix R maps device coords to Earth coords: v_earth = R * v_device
+    // Earth frame: (East, North, Up)
+    // Device frame: (Right, Top, ScreenOut)
+    //
+    // R = [eastX  northX  upX]   ← these are device X,Y,Z expressed in Earth-East
+    //     [eastY  northY  upY]   ← these are device X,Y,Z expressed in Earth-North
+    //     [eastZ  northZ  upZ]   ← these are device X,Y,Z expressed in Earth-Up
+    //
+    // Phone held upright in portrait: the screen faces the user.
+    // The direction the phone "looks at" is the NEGATIVE Z axis (into the screen).
+    // Device -Z in Earth frame = negative of column 2 = (-upX, -upY, -upZ)
+    //   -upX = how much of device -Z goes East
+    //   -upY = how much of device -Z goes North
+    //   -upZ = how much of device -Z goes Up
+
+    const pointEast = -upX;
+    const pointNorth = -upY;
+    const pointUp = -upZ;
+
+    // Azimuth: clockwise from North
+    let azimuthDeg = Math.atan2(pointEast, pointNorth) * RAD_TO_DEG;
+    azimuthDeg = ((azimuthDeg % 360) + 360) % 360;
+
+    // Altitude: angle above horizon
+    let altitudeDeg = Math.asin(Math.max(-1, Math.min(1, pointUp))) * RAD_TO_DEG;
+    altitudeDeg = Math.max(-90, Math.min(90, altitudeDeg));
+
+    // Smooth
+    if (!this.hasFirstReading) {
+      this.smoothedAzimuth = azimuthDeg;
+      this.smoothedAltitude = altitudeDeg;
+      this.hasFirstReading = true;
+    } else {
+      this.smoothedAzimuth = circularLerp(this.smoothedAzimuth, azimuthDeg, 0.15);
+      this.smoothedAltitude += 0.15 * (altitudeDeg - this.smoothedAltitude);
     }
+
+    this.emit({
+      heading: this.smoothedAzimuth,
+      pitch: altitudeDeg,
+      roll: 0,
+      azimuth: this.smoothedAzimuth,
+      altitude: this.smoothedAltitude,
+      confidence: 1,
+    });
+  }
+
+  stopUpdates(): void {
+    for (const sub of this.subscriptions) sub.remove();
+    this.subscriptions = [];
     this.isRunning = false;
   }
-  
-  /**
-   * Subscribes to filtered orientation updates
-   * @returns Unsubscribe function
-   */
+
   onOrientationChange(callback: OrientationCallback): () => void {
     this.listeners.add(callback);
-    return () => {
-      this.listeners.delete(callback);
-    };
+    return () => this.listeners.delete(callback);
   }
-  
-  /**
-   * Sets low-pass filter smoothing factor
-   * Constrained to [0.1, 0.5] range
-   */
+
+  getStatus(): SensorStatus { return { ...this.status }; }
+  isUsingNativeFusion(): boolean { return false; }
+
+  resetFusion(): void {
+    this.accelFilter.reset();
+    this.magFilter.reset();
+    this.lastValidOrientation = null;
+    this.hasFirstReading = false;
+    this.hasMag = false;
+  }
+
   setFilterAlpha(alpha: number): void {
-    const constrainedAlpha = this.constrainAlpha(alpha);
-    this.magnetometerFilter.setAlpha(constrainedAlpha);
-    this.accelerometerFilter.setAlpha(constrainedAlpha);
-    this.gyroscopeFilter.setAlpha(constrainedAlpha);
+    const a = Math.max(0.05, Math.min(0.5, alpha));
+    this.accelFilter.setAlpha(a);
+    this.magFilter.setAlpha(a);
   }
-  
-  /**
-   * Gets current sensor status
-   */
-  getStatus(): SensorStatus {
-    return { ...this.status };
+
+  getFilterAlpha(): number { return this.accelFilter.getAlpha(); }
+  setErrorCallback(callback: ErrorCallback | null): void { this.errorCallback = callback; }
+
+  // API compatibility stubs
+  calibrate(): void {}
+  resetCalibration(): void {}
+  getIsCalibrated(): boolean { return true; }
+  getIsCalibrating(): boolean { return false; }
+  onCalibrationChange(callback: (calibrated: boolean) => void): () => void {
+    setTimeout(() => callback(true), 0);
+    return () => {};
   }
-  
-  /**
-   * Gets current filter alpha value
-   */
-  getFilterAlpha(): number {
-    return this.magnetometerFilter.getAlpha();
-  }
-  
-  /**
-   * Updates raw sensor data (called by native sensor callbacks in real app)
-   */
-  updateSensorData(
-    magnetometer?: Vector3D,
-    accelerometer?: Vector3D,
-    gyroscope?: Vector3D
-  ): void {
-    if (magnetometer) this.lastMagnetometer = magnetometer;
-    if (accelerometer) this.lastAccelerometer = accelerometer;
-    if (gyroscope) this.lastGyroscope = gyroscope;
-  }
-  
-  /**
-   * Processes sensor data and computes orientation
-   */
-  private processSensorData(): void {
-    // Check for invalid sensor data (NaN values)
-    if (this.hasInvalidData(this.lastMagnetometer) ||
-        this.hasInvalidData(this.lastAccelerometer)) {
-      // Skip frame, use last valid reading if available
-      if (this.lastValidOrientation) {
-        this.listeners.forEach(callback => callback(this.lastValidOrientation!));
-      }
-      return;
+
+  updateSensorData(magnetometer?: Vector3D, accelerometer?: Vector3D): void {
+    if (accelerometer) this.gravity = this.accelFilter.filter(accelerometer);
+    if (magnetometer) {
+      this.mag = this.magFilter.filter(magnetometer);
+      this.hasMag = true;
     }
-    
-    // Apply low-pass filtering
-    const filteredMag = this.magnetometerFilter.filter(this.lastMagnetometer);
-    const filteredAcc = this.accelerometerFilter.filter(this.lastAccelerometer);
-    // Gyroscope filtered but not used directly in orientation calculation
-    this.gyroscopeFilter.filter(this.lastGyroscope);
-    
-    // Compute orientation from filtered sensor data
-    const orientation = this.computeOrientation(filteredMag, filteredAcc);
-    
-    // Validate computed orientation
-    if (this.isValidOrientation(orientation)) {
+    if (this.hasMag) this.computeOrientation();
+  }
+
+  simulatePermissionDenied(sensor: 'magnetometer' | 'accelerometer' | 'gyroscope'): void {
+    this.status[sensor] = 'denied';
+    this.emitError({ type: 'permission_denied', sensor, message: `Permission denied for ${sensor}.` });
+  }
+
+  simulateSensorUnavailable(sensor: 'magnetometer' | 'accelerometer' | 'gyroscope'): void {
+    this.status[sensor] = 'unavailable';
+    this.emitError({ type: 'sensor_unavailable', sensor, message: `${sensor} is not available.` });
+  }
+
+  private emit(orientation: DeviceOrientation): void {
+    if (this.isValid(orientation)) {
       this.lastValidOrientation = orientation;
-      // Notify listeners
-      this.listeners.forEach(callback => callback(orientation));
+      for (const cb of this.listeners) cb(orientation);
     } else if (this.lastValidOrientation) {
-      // Use last valid orientation on computation error
-      this.listeners.forEach(callback => callback(this.lastValidOrientation!));
+      for (const cb of this.listeners) cb(this.lastValidOrientation);
     }
   }
-  
-  /**
-   * Checks if vector contains invalid (NaN or Infinity) values
-   */
-  private hasInvalidData(v: Vector3D): boolean {
-    return !Number.isFinite(v.x) || !Number.isFinite(v.y) || !Number.isFinite(v.z);
+
+  private emitError(error: SensorError): void { this.errorCallback?.(error); }
+
+  private isValid(o: DeviceOrientation): boolean {
+    return Number.isFinite(o.heading) && Number.isFinite(o.pitch) &&
+      Number.isFinite(o.roll) && Number.isFinite(o.azimuth) && Number.isFinite(o.altitude);
   }
-  
-  /**
-   * Validates computed orientation values
-   */
-  private isValidOrientation(o: DeviceOrientation): boolean {
-    return Number.isFinite(o.heading) && 
-           Number.isFinite(o.pitch) && 
-           Number.isFinite(o.roll);
-  }
-  
-  /**
-   * Computes device orientation from magnetometer and accelerometer data
-   * Uses tilt-compensated compass algorithm
-   */
-  private computeOrientation(mag: Vector3D, acc: Vector3D): DeviceOrientation {
-    // Normalize accelerometer
-    const accNorm = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-    const ax = acc.x / accNorm;
-    const ay = acc.y / accNorm;
-    const az = acc.z / accNorm;
-    
-    // Calculate pitch and roll from accelerometer
-    // Pitch: rotation around X axis (-90 to +90)
-    const pitch = Math.asin(-ax) * (180 / Math.PI);
-    
-    // Roll: rotation around Y axis (-180 to +180)
-    const roll = Math.atan2(ay, az) * (180 / Math.PI);
-    
-    // Tilt-compensated heading from magnetometer
-    const pitchRad = pitch * (Math.PI / 180);
-    const rollRad = roll * (Math.PI / 180);
-    
-    // Compensate magnetometer readings for tilt
-    const magX = mag.x * Math.cos(pitchRad) + 
-                 mag.z * Math.sin(pitchRad);
-    const magY = mag.x * Math.sin(rollRad) * Math.sin(pitchRad) +
-                 mag.y * Math.cos(rollRad) -
-                 mag.z * Math.sin(rollRad) * Math.cos(pitchRad);
-    
-    // Calculate heading (yaw)
-    let heading = Math.atan2(-magY, magX) * (180 / Math.PI);
-    
-    // Normalize heading to [0, 360)
-    if (heading < 0) heading += 360;
-    if (heading >= 360) heading -= 360;
-    
-    return {
-      heading: this.clampHeading(heading),
-      pitch: this.clampPitch(pitch),
-      roll: this.clampRoll(roll),
-    };
-  }
-  
-  /**
-   * Clamps heading to [0, 360)
-   */
-  private clampHeading(heading: number): number {
-    let h = heading % 360;
-    if (h < 0) h += 360;
-    return h;
-  }
-  
-  /**
-   * Clamps pitch to [-90, 90]
-   */
-  private clampPitch(pitch: number): number {
-    return Math.max(-90, Math.min(90, pitch));
-  }
-  
-  /**
-   * Clamps roll to [-180, 180]
-   */
-  private clampRoll(roll: number): number {
-    let r = roll;
-    while (r > 180) r -= 360;
-    while (r < -180) r += 360;
-    return r;
-  }
+}
+
+function circularLerp(current: number, target: number, alpha: number): number {
+  let diff = target - current;
+  if (diff > 180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return (((current + alpha * diff) % 360) + 360) % 360;
 }
 
 export default SensorManager;

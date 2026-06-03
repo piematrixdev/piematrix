@@ -7,6 +7,14 @@ export default function Document() {
         {/* Favicon */}
         <link rel="icon" type="image/png" href="/favicon.png" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+        {/* Display font for admin / titles — Jost */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link
+          href="https://fonts.googleapis.com/css2?family=Jost:wght@500;600;700&display=swap"
+          rel="stylesheet"
+        />
         
         {/* SEO Meta Tags */}
         <meta name="description" content="SkyWatch - Real-time interactive star map and astronomy companion. Explore stars, planets, constellations, and deep sky objects from your location." />
