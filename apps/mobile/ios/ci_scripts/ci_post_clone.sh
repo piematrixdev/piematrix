@@ -43,6 +43,14 @@ echo "▸ Installing JS dependencies (npm ci)…"
 cd "$REPO_ROOT"
 npm ci
 
+# ── 2b. Build workspace packages the app imports ──────────────────
+# The mobile app imports @virtual-window/astronomy-engine, whose
+# package.json "main" points at ./dist/index.js. dist/ is gitignored
+# (build output), so it must be compiled here before Metro bundles —
+# otherwise the build fails with "could not resolve dist/index.js".
+echo "▸ Building @virtual-window/astronomy-engine…"
+npm run build --workspace=@virtual-window/astronomy-engine
+
 # ── 3. CocoaPods ──────────────────────────────────────────────────
 echo "▸ Installing CocoaPods…"
 brew install cocoapods
