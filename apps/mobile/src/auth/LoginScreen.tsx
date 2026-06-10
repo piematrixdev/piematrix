@@ -18,9 +18,11 @@ import { useContent } from '../content/ContentContext';
 
 const { width: W, height: H } = Dimensions.get('window');
 const F_LIGHT = 'Poppins-Light';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 
 WebBrowser.maybeCompleteAuthSession();
 

@@ -16,9 +16,11 @@ import { useAuth } from './auth/AuthContext';
 
 const { width: W } = Dimensions.get('window');
 const F_LIGHT = 'Poppins-Light';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 const ACCENT = '#d4c5a0';
 
 interface Event {

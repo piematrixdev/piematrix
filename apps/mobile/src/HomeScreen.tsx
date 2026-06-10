@@ -17,8 +17,11 @@ import {
   Moon as MoonIcon, Sun1, Eye, Global, MessageText1, Cloud, Calendar,
 } from 'iconsax-react-native';
 import type { GeographicCoordinates } from '@virtual-window/astronomy-engine';
+import * as Location from 'expo-location';
 import { computeTonightsSky, TonightsSkyData } from './tonightsSky';
+import SkyIcon from './components/SkyIcon';
 import { fetchSkyWeather, SkyWeather, stargazingScoreColor } from './skyEvents';
+import { getEventsForRange, CalendarEvent, EVENT_COLORS, prefetchCalendarEvents } from './calendarEvents';
 import { prefetchImages } from './celestialImages';
 import { fetchFeaturedProducts, fetchCollectionProducts, Product } from './shopify';
 import LazyImage from './components/LazyImage';
@@ -28,9 +31,11 @@ import { useContent } from './content/ContentContext';
 const { width: W, height: H } = Dimensions.get('window');
 const F_LIGHT = 'Poppins-Light';
 const F_REG = 'Poppins-Regular';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
-const F_TITLE_SOFT = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
+const F_TITLE_SOFT = 'Poppins-SemiBold';
 
 const SUPABASE_URL = 'https://gmsylfwpftqdlzoboqqr.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_4R6Zi5c2SjkZA3YYan1-wg_842wVGyX';
@@ -101,8 +106,10 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
   const [profileAvatar, setProfileAvatar] = useState<string | null>(null);
   const [heroIndex] = useState(() => Math.floor(Math.random() * 6));
   const [detailObject, setDetailObject] = useState<any>(null);
+  const [calendarEventMap, setCalendarEventMap] = useState<Map<string, CalendarEvent[]>>(new Map());
 
   const [profileIncomplete, setProfileIncomplete] = useState(false);
+  const [locationName, setLocationName] = useState<string | null>(null);
 
   useEffect(() => {
     // Use cached data if fresh enough
@@ -182,7 +189,27 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
         prefetchImages(objs, 6).then(setDsoImages);
       } catch {}
       fetchSkyWeather(observer.latitude, observer.longitude).then(setWeather).catch(() => {});
+      // Reverse geocode to get city name
+      Location.reverseGeocodeAsync({ latitude: observer.latitude, longitude: observer.longitude })
+        .then(results => {
+          if (results[0]) {
+            const r = results[0];
+            const city = r.city || r.subregion || r.region || '';
+            const region = r.region || '';
+            setLocationName(city === region ? city : city ? `${city}, ${region}` : region);
+          }
+        })
+        .catch(() => {});
     }
+    // Fetch calendar events for the next 7 days from backend + compute moon phases
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    prefetchCalendarEvents(today, 30).then(() => {
+      setCalendarEventMap(getEventsForRange(today, 7));
+    }).catch(() => {
+      // Even if backend fetch fails, moon phases still work
+      setCalendarEventMap(getEventsForRange(today, 7));
+    });
     Animated.loop(Animated.sequence([
       Animated.timing(pulseAnim, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       Animated.timing(pulseAnim, { toValue: 0, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
@@ -318,6 +345,14 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
               </View>
             ) : null}
 
+            {/* Location */}
+            {locationName ? (
+              <View style={s.locationRow}>
+                <Global size={13} color="rgba(255,255,255,0.5)" variant="Bulk" />
+                <Text style={s.locationText}>{locationName}</Text>
+              </View>
+            ) : null}
+
             <Text style={s.heroSub}>
               {weather
                 ? weather.nextClearText
@@ -369,7 +404,7 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
               {tonightData.deepSky.slice(0, 4).map(d => (
                 <TouchableOpacity key={d.id} style={s.highlightCard} activeOpacity={0.8} onPress={() => setDetailObject({ type: 'Deep Sky', ...d })}>
                   <View style={[s.highlightIcon, { backgroundColor: 'rgba(201,184,150,0.12)' }]}>
-                    <Discover size={20} color="#c9b896" variant="Bulk" />
+                    <SkyIcon name="orbit" size={20} color="#c9b896" />
                   </View>
                   <Text style={s.highlightName}>{d.name ?? d.id}</Text>
                   <Text style={s.highlightInfo}>{d.type} · mag {d.magnitude.toFixed(1)}</Text>
@@ -388,17 +423,68 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
           </View>
         )}
 
-        {/* Tonight's highlights — compact horizontal */}
-        {tonightData && tonightData.planets.length > 0 && (
-          <View style={s.section}>
-            <View style={s.sectionHead}>
-              <Text style={s.sectionTitle}>{t('home.section.tonight', 'Visible Tonight')}</Text>
-              <TouchableOpacity onPress={() => onNavigate('calendar')}>
-                <Text style={s.sectionLink}>Calendar →</Text>
-              </TouchableOpacity>
-            </View>
+        {/* Sky Calendar date strip */}
+        <View style={s.calSection}>
+          <View style={s.sectionHead}>
+            <Text style={s.sectionTitle}>SKY CALENDAR</Text>
+            <TouchableOpacity onPress={() => onNavigate('calendar')}>
+              <Text style={s.sectionLink}>Full calendar →</Text>
+            </TouchableOpacity>
           </View>
-        )}
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.calStrip}>
+            {Array.from({ length: 7 }, (_, i) => {
+              const d = new Date();
+              d.setDate(d.getDate() + i);
+              d.setHours(0, 0, 0, 0);
+              const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+              const isFirst = i === 0;
+              // Moon phase calc
+              const known = new Date(2024, 0, 11);
+              const diff = (d.getTime() - known.getTime()) / (1000 * 60 * 60 * 24);
+              const phase = ((diff % 29.53) + 29.53) % 29.53;
+              const moonEmoji = phase < 1.85 ? '🌑' : phase < 5.53 ? '🌒' : phase < 9.22 ? '🌓' : phase < 12.91 ? '🌔' : phase < 16.61 ? '🌕' : phase < 20.30 ? '🌖' : phase < 23.99 ? '🌗' : phase < 27.68 ? '🌘' : '🌑';
+              // Get events for this date
+              const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              const dayEvents = calendarEventMap.get(dateKey) ?? [];
+              return (
+                <TouchableOpacity
+                  key={i}
+                  style={[s.calPill, isFirst && s.calPillActive]}
+                  activeOpacity={0.8}
+                  onPress={() => onNavigate('calendar')}
+                >
+                  <Text style={[s.calPillDay, isFirst && s.calPillDayActive]}>{dayNames[d.getDay()]}</Text>
+                  <Text style={[s.calPillNum, isFirst && s.calPillNumActive]}>{d.getDate()}</Text>
+                  <Text style={s.calPillMoon}>{moonEmoji}</Text>
+                  {/* Event indicator dots */}
+                  {dayEvents.length > 0 ? (
+                    <View style={s.calEventDots}>
+                      {dayEvents.slice(0, 3).map((ev, idx) => (
+                        <View key={idx} style={[s.calEventDot, { backgroundColor: ev.color }]} />
+                      ))}
+                    </View>
+                  ) : isFirst ? (
+                    <View style={s.calTodayDot} />
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {/* Event legend — shows what's coming this week */}
+          {calendarEventMap.size > 0 && (
+            <View style={s.calLegend}>
+              {Array.from(calendarEventMap.values()).flat()
+                .filter((ev, i, arr) => arr.findIndex(e => e.type === ev.type) === i) // unique by type
+                .slice(0, 4)
+                .map((ev, i) => (
+                  <View key={i} style={s.calLegendItem}>
+                    <View style={[s.calLegendDot, { backgroundColor: ev.color }]} />
+                    <Text style={s.calLegendText}>{ev.label}</Text>
+                  </View>
+                ))}
+            </View>
+          )}
+        </View>
 
         {/* Promo Banners */}
         <View style={s.bannerWrap}>
@@ -476,12 +562,19 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
           </ScrollView>
         </View>
 
-        {/* Action cards */}
+        {/* Action cards — organized by priority */}
         <View style={s.section}>
+          <View style={s.sectionHead}>
+            <Text style={s.sectionTitle}>QUICK ACCESS</Text>
+          </View>
+
+          {/* Primary — Astronomy tools */}
           <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('telescope')}>
-            <Star1 size={22} color="#c9b896" variant="Bulk" />
+            <View style={[s.actionIcon, { backgroundColor: 'rgba(201,184,150,0.12)' }]}>
+              <Star1 size={20} color="#c9b896" variant="Bulk" />
+            </View>
             <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>{t('home.action.telescope.title', 'Telescope targets')}</Text>
+              <Text style={s.actionTitle}>{t('home.action.telescope.title', 'Telescope Targets')}</Text>
               <Text style={s.actionDesc}>
                 {tonightData && tonightData.deepSky.length > 0
                   ? `${tonightData.deepSky[0].name ?? tonightData.deepSky[0].id} + ${tonightData.deepSky.length - 1} more tonight`
@@ -491,29 +584,37 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
             <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
           </TouchableOpacity>
 
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('shop')}>
-            <ShoppingBag size={22} color="#f59e0b" variant="Bulk" />
+          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('events')}>
+            <View style={[s.actionIcon, { backgroundColor: 'rgba(74,222,128,0.12)' }]}>
+              <Calendar size={20} color="#4ade80" variant="Bulk" />
+            </View>
             <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>{t('home.action.shop.title', 'Upgrade your view')}</Text>
+              <Text style={s.actionTitle}>Events & Activities</Text>
+              <Text style={s.actionDesc}>Stargazing nights, workshops & more</Text>
+            </View>
+            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
+          </TouchableOpacity>
+
+          {/* Secondary — Commerce */}
+          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('shop')}>
+            <View style={[s.actionIcon, { backgroundColor: 'rgba(245,158,11,0.12)' }]}>
+              <ShoppingBag size={20} color="#f59e0b" variant="Bulk" />
+            </View>
+            <View style={s.actionInfo}>
+              <Text style={s.actionTitle}>{t('home.action.shop.title', 'Shop Equipment')}</Text>
               <Text style={s.actionDesc}>{t('home.action.shop.desc', 'Telescopes, binoculars & accessories')}</Text>
             </View>
             <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
           </TouchableOpacity>
 
+          {/* Tertiary — Support */}
           <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('feedback')}>
-            <MessageText1 size={22} color="#60a5fa" variant="Bulk" />
-            <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>{t('home.action.feedback.title', 'Send Feedback')}</Text>
-              <Text style={s.actionDesc}>{t('home.action.feedback.desc', 'Help us improve Pie Matrix')}</Text>
+            <View style={[s.actionIcon, { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
+              <MessageText1 size={20} color="#60a5fa" variant="Bulk" />
             </View>
-            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
-          </TouchableOpacity>
-
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('events')}>
-            <Calendar size={22} color="#4ade80" variant="Bulk" />
             <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>Events & Activities</Text>
-              <Text style={s.actionDesc}>Stargazing nights, workshops & more</Text>
+              <Text style={s.actionTitle}>{t('home.action.feedback.title', 'Support & Feedback')}</Text>
+              <Text style={s.actionDesc}>{t('home.action.feedback.desc', 'Get help or share your thoughts')}</Text>
             </View>
             <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
           </TouchableOpacity>
@@ -615,15 +716,15 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#030308' },
   skyBg: { position: 'absolute', top: 0, left: 0, right: 0, height: H },
-  scroll: { paddingBottom: 60 },
+  scroll: { paddingBottom: 140 },
 
   // Header (overlaid on hero image)
   header: {
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     paddingTop: 58, paddingHorizontal: 22,
   },
-  greeting: { color: 'rgba(255,255,255,0.5)', fontSize: 12, fontFamily: F_LIGHT, letterSpacing: 1 },
-  brand: { color: '#fff', fontSize: 28, fontFamily: F_TITLE, marginTop: 2, letterSpacing: -0.8 },
+  greeting: { color: 'rgba(255,255,255,0.5)', fontSize: 12, fontFamily: F_MEDIUM, letterSpacing: 1 },
+  brand: { color: '#fff', fontSize: 28, fontFamily: 'Poppins-Black', marginTop: 2, letterSpacing: -0.8 },
   avatarOuter: { width: 50, height: 50, justifyContent: 'center', alignItems: 'center' },
   avatarWrap: { width: 42, height: 42, borderRadius: 21, overflow: 'hidden', borderWidth: 2, borderColor: 'rgba(255,255,255,0.2)' },
   avatarThumb: { width: '100%' as any, height: '100%' as any },
@@ -650,12 +751,17 @@ const s = StyleSheet.create({
   weatherTemp: { color: '#fff', fontSize: 12, fontFamily: F_BOLD },
   weatherCondition: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontFamily: F_REG },
   weatherDivider: { color: 'rgba(255,255,255,0.3)', fontSize: 12 },
+
+  // Location row
+  locationRow: { flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 6 },
+  locationText: { color: 'rgba(255,255,255,0.5)', fontSize: 12, fontFamily: F_REG },
+
   heroCta: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: '#e8dcc8', paddingVertical: 13, borderRadius: 14, marginTop: 16,
     alignSelf: 'flex-start', paddingHorizontal: 20,
   },
-  heroCtaText: { color: '#030308', fontSize: 13, fontFamily: F_BOLD },
+  heroCtaText: { color: '#030308', fontSize: 13, fontFamily: F_SEMIBOLD },
 
   // Profile completion banner
   profileBanner: {
@@ -664,7 +770,7 @@ const s = StyleSheet.create({
     borderWidth: 1, borderColor: 'rgba(212,197,160,0.2)',
   },
   profileBannerContent: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  profileBannerTitle: { color: '#d4c5a0', fontSize: 13, fontFamily: F_BOLD },
+  profileBannerTitle: { color: '#d4c5a0', fontSize: 13, fontFamily: F_SEMIBOLD },
   profileBannerSub: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontFamily: F_LIGHT, marginTop: 2 },
 
   // Sections
@@ -673,8 +779,8 @@ const s = StyleSheet.create({
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
     marginHorizontal: 24, marginBottom: 14,
   },
-  sectionTitle: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: F_BOLD, letterSpacing: 1.5, textTransform: 'uppercase' },
-  sectionLink: { color: '#d4c5a0', fontSize: 12, fontFamily: F_BOLD },
+  sectionTitle: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: F_MEDIUM, letterSpacing: 1.5, textTransform: 'uppercase' },
+  sectionLink: { color: '#d4c5a0', fontSize: 12, fontFamily: F_MEDIUM },
 
   // Highlight cards (tonight's objects)
   highlightScroll: { paddingHorizontal: 24, gap: 12 },
@@ -685,14 +791,14 @@ const s = StyleSheet.create({
   highlightIcon: {
     width: 36, height: 36, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 10,
   },
-  highlightName: { color: '#fff', fontSize: 13, fontFamily: F_TITLE, marginBottom: 3 },
+  highlightName: { color: '#fff', fontSize: 13, fontFamily: F_MEDIUM, marginBottom: 3 },
   highlightInfo: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontFamily: F_LIGHT },
 
   // Detail modal
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.7)', justifyContent: 'center', alignItems: 'center', padding: 30 },
   modalCard: { backgroundColor: '#141418', borderRadius: 20, padding: 24, width: '100%', maxWidth: 340, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   modalTitle: { color: '#fff', fontSize: 22, fontFamily: F_TITLE, marginBottom: 4 },
-  modalType: { color: '#d4c5a0', fontSize: 12, fontFamily: F_BOLD, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 },
+  modalType: { color: '#d4c5a0', fontSize: 12, fontFamily: F_SEMIBOLD, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10 },
   modalDesc: { color: 'rgba(255,255,255,0.6)', fontSize: 13, fontFamily: F_LIGHT, lineHeight: 19, marginBottom: 14 },
   modalDivider: { height: 1, backgroundColor: 'rgba(255,255,255,0.06)', marginBottom: 12 },
   modalRows: { gap: 0 },
@@ -707,7 +813,7 @@ const s = StyleSheet.create({
   bannerCard: { width: W - 32, height: 170, borderRadius: 20, overflow: 'hidden' },
   bannerGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 90, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
   bannerContent: { position: 'absolute', bottom: 18, left: 18, right: 18 },
-  bannerTitle: { color: '#fff', fontSize: 19, fontFamily: F_TITLE, textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
+  bannerTitle: { color: '#fff', fontSize: 19, fontFamily: F_BOLD, textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
   bannerSub: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontFamily: F_LIGHT, marginTop: 2 },
   dots: { flexDirection: 'row', justifyContent: 'center', marginTop: 10, gap: 5 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'rgba(255,255,255,0.15)' },
@@ -742,7 +848,7 @@ const s = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     borderBottomLeftRadius: 16, borderBottomRightRadius: 16,
   },
-  catTitle: { color: '#fff', fontSize: 12, fontFamily: F_TITLE, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  catTitle: { color: '#fff', fontSize: 12, fontFamily: F_MEDIUM, textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
   catLabel: { color: 'rgba(255,255,255,0.8)', fontSize: 11, fontFamily: F_REG, paddingHorizontal: 8, paddingVertical: 8, textAlign: 'center' },
 
   // Action cards
@@ -752,15 +858,40 @@ const s = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16,
     borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
   },
+  actionIcon: {
+    width: 40, height: 40, borderRadius: 12,
+    justifyContent: 'center', alignItems: 'center',
+  },
+
+  // Sky Calendar strip
+  calSection: { marginBottom: 28 },
+  calStrip: { paddingHorizontal: 24, gap: 8 },
+  calPill: {
+    width: 52, height: 80, borderRadius: 16, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 0.5, borderColor: 'rgba(255,255,255,0.06)',
+  },
+  calPillActive: { backgroundColor: 'rgba(200,185,150,0.18)', borderColor: 'rgba(210,195,160,0.4)' },
+  calPillDay: { color: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: F_LIGHT },
+  calPillDayActive: { color: '#e8dcc8' },
+  calPillNum: { color: 'rgba(255,255,255,0.7)', fontSize: 17, fontFamily: F_BOLD, marginTop: 2 },
+  calPillNumActive: { color: '#fff' },
+  calPillMoon: { fontSize: 10, marginTop: 3 },
+  calEventDots: { flexDirection: 'row', gap: 3, marginTop: 4 },
+  calEventDot: { width: 5, height: 5, borderRadius: 2.5 },
+  calTodayDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#4ade80', marginTop: 3 },
+  calLegend: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 24, marginTop: 12, gap: 10 },
+  calLegendItem: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  calLegendDot: { width: 6, height: 6, borderRadius: 3 },
+  calLegendText: { color: 'rgba(255,255,255,0.4)', fontSize: 11, fontFamily: F_LIGHT },
   actionInfo: { flex: 1 },
-  actionTitle: { color: '#fff', fontSize: 14, fontFamily: F_TITLE },
+  actionTitle: { color: '#fff', fontSize: 14, fontFamily: F_MEDIUM },
   actionDesc: { color: 'rgba(255,255,255,0.3)', fontSize: 12, fontFamily: F_LIGHT, marginTop: 2 },
 
   // Footer
   footer: { marginTop: 32, overflow: 'hidden' } as any,
   marqueeWrap: { width: W, overflow: 'hidden', height: 56 } as any,
   marqueeTrack: { flexDirection: 'row', position: 'absolute', height: 56, alignItems: 'center' } as any,
-  marqueeText: { color: 'rgba(255,255,255,0.55)', fontSize: 44, fontFamily: F_TITLE, width: W * 2.2 } as any,
-  footerBrand: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontFamily: F_TITLE_SOFT, letterSpacing: 0.5 } as any,
+  marqueeText: { color: 'rgba(255,255,255,0.55)', fontSize: 44, fontFamily: 'Poppins-Black', width: W * 2.2 } as any,
+  footerBrand: { color: 'rgba(255,255,255,0.6)', fontSize: 14, fontFamily: F_SEMIBOLD, letterSpacing: 0.5 } as any,
   footerVer: { color: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: F_LIGHT, marginTop: 4, letterSpacing: 1.5 } as any,
 });

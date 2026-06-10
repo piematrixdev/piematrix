@@ -59,5 +59,20 @@ target 'PieMatrix' do
       :mac_catalyst_enabled => false,
       :ccache_enabled => ccache_enabled?(podfile_properties),
     )
+
+    # Normalize every pod's iOS deployment target to the app minimum.
+    # Some third-party pods (RNCAsyncStorage 13.4, RNSVG 12.4, SDWebImage 9.0,
+    # etc.) ship with very old targets that Xcode now warns about (supported
+    # range is 15.0+). Force them all up to the app's deployment target so the
+    # warnings disappear and every pod builds against a consistent SDK floor.
+    app_deployment_target = podfile_properties['ios.deploymentTarget'] || '15.1'
+    installer.pods_project.targets.each do |target|
+      target.build_configurations.each do |config|
+        current = config.build_settings['IPHONEOS_DEPLOYMENT_TARGET']
+        if current.nil? || current.to_f < app_deployment_target.to_f
+          config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = app_deployment_target
+        end
+      end
+    end
   end
 end

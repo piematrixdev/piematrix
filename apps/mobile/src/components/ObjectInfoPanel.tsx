@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CloseCircle, Heart } from 'iconsax-react-native';
@@ -44,6 +44,38 @@ export default function ObjectInfoPanel({ object, onClose }: Props) {
   const { isFavorite, toggleFavorite } = useFavorites();
   const objectId = object.name;
   const favorited = isFavorite(objectId);
+  const [wikiSummary, setWikiSummary] = useState<string | null>(null);
+  const [wikiLoading, setWikiLoading] = useState(false);
+
+  // Fetch Wikipedia summary when object changes
+  useEffect(() => {
+    setWikiSummary(null);
+    setWikiLoading(true);
+
+    // Build a search query appropriate for the object type
+    const searchName = object.type === 'Star' && object.name.startsWith('HIP')
+      ? `${object.name} star`
+      : object.type === 'Constellation'
+        ? `${object.name} constellation`
+        : object.type === 'Deep Sky'
+          ? object.name
+          : `${object.name} ${object.type === 'Planet' ? 'planet' : object.type === 'Moon' ? '' : 'astronomy'}`;
+
+    fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(searchName)}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.extract) {
+          setWikiSummary(data.extract);
+        } else {
+          // Fallback: try just the name
+          return fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(object.name)}`)
+            .then(r => r.ok ? r.json() : null)
+            .then(d => { if (d?.extract) setWikiSummary(d.extract); });
+        }
+      })
+      .catch(() => {})
+      .finally(() => setWikiLoading(false));
+  }, [object.name]);
 
   const handleToggleFavorite = () => {
     toggleFavorite({
@@ -157,6 +189,20 @@ export default function ObjectInfoPanel({ object, onClose }: Props) {
               <InfoRow label="Az / Alt" value={`${object.azFormatted}  ${object.altFormatted}`} />
             )}
           </View>
+
+          {/* Wikipedia summary */}
+          {wikiLoading && (
+            <View style={s.wikiSection}>
+              <ActivityIndicator size="small" color="rgba(255,255,255,0.3)" />
+            </View>
+          )}
+          {wikiSummary && (
+            <View style={s.wikiSection}>
+              <View style={s.sep} />
+              <Text style={s.wikiText}>{wikiSummary}</Text>
+              <Text style={s.wikiSource}>— Wikipedia</Text>
+            </View>
+          )}
         </BlurView>
       </View>
     </TouchableOpacity>
@@ -174,7 +220,7 @@ const s = StyleSheet.create({
   tint: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(6,6,18,0.7)' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
   headerActions: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  name: { color: '#fff', fontSize: 19, fontWeight: '700', fontFamily: 'TenorSans_400Regular' },
+  name: { color: '#fff', fontSize: 19, fontWeight: '700', fontFamily: 'Poppins-ExtraBold' },
   spectral: { fontSize: 12, fontFamily: 'Poppins-Regular', marginTop: 2, opacity: 0.85 },
   extra: { color: 'rgba(255,255,255,0.45)', fontSize: 12, fontFamily: 'Poppins-Light', marginTop: 2 },
   badgeRow: { flexDirection: 'row', gap: 8, marginBottom: 12, flexWrap: 'wrap' },
@@ -185,4 +231,7 @@ const s = StyleSheet.create({
   infoLabel: { color: 'rgba(255,255,255,0.45)', fontSize: 13, fontFamily: 'Poppins-Light' },
   infoValue: { color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: '600', fontFamily: 'Poppins-Regular' },
   favBtn: { padding: 6 },
+  wikiSection: { marginTop: 10 },
+  wikiText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontFamily: 'Poppins-Light', lineHeight: 18 },
+  wikiSource: { color: 'rgba(255,255,255,0.25)', fontSize: 10, fontFamily: 'Poppins-Light', marginTop: 6, textAlign: 'right' },
 });

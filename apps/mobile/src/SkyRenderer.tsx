@@ -539,8 +539,8 @@ const DSO_SHADERS: Record<string, string> = {
 const DSO_SIZE_MULT: Record<string, number> = {
   Galaxy: 1.4,
   Nebula: 1.6,
-  'Open Cluster': 0.5,
-  'Globular Cluster': 0.6,
+  'Open Cluster': 1.0,
+  'Globular Cluster': 0.9,
   'Planetary Nebula': 0.9,
 };
 
@@ -565,6 +565,10 @@ interface Props {
   sunPosition: SunPosition | null;
   deepSkyPositions: Map<string, DeepSkyPosition>;
   satellitePositions: Map<string, any>; // SatellitePosition objects from the tracker
+  /** Predicted satellite positions 1s into the future — used for smooth interpolation. */
+  satellitePositionsNextRef?: React.MutableRefObject<Map<string, any>>;
+  /** Timestamps of the prev/next satellite snapshots (ms epoch). */
+  satelliteTimeRef?: React.MutableRefObject<{ prev: number; next: number }>;
   sunAltitude: number;
   constellationSegments: Array<{ start: HorizontalCoordinates; end: HorizontalCoordinates }>;
   constellationLabels: Array<{ id: string; name: string; pos: HorizontalCoordinates }>;
@@ -587,6 +591,8 @@ interface Props {
   redMode?: boolean;
   /** Selected ground texture id (see grounds.ts) */
   groundId?: string;
+  /** Currently selected object ref (for showing orbital path — bypasses React render) */
+  selectedObjectRef?: React.MutableRefObject<{ name: string | null; type: string | null }>;
 }
 
 /**
@@ -664,6 +670,7 @@ function SkyRendererImpl(props: Props) {
   const saturnRingMeshRef = useRef<THREE.Mesh | null>(null);
   const moonMeshRef = useRef<THREE.Mesh | null>(null);
   const sunMeshRef = useRef<THREE.Mesh | null>(null);
+  const orbitalPathRef = useRef<THREE.Line | null>(null);
   const dsoMeshes = useRef<THREE.Mesh[]>([]);
   const satMeshes = useRef<THREE.Mesh[]>([]);
   const satTexRef = useRef<THREE.DataTexture | null>(null);
@@ -720,11 +727,42 @@ function SkyRendererImpl(props: Props) {
 
     /**
      * Update camera projection.
-     * FOV is used directly as the vertical field of view.
-     * At 60° the user sees ~60° of sky vertically on screen.
+     *
+     * The FOV value is interpreted as the angular extent across the screen's
+     * MIN dimension (horizontal in portrait, vertical in landscape) using a
+     * stereographic projection — same convention as Stellarium and most
+     * planetarium apps. This makes "FOV 30°" mean the same thing here as it
+     * does in Stellarium.
+     *
+     * Three.js PerspectiveCamera.fov is always the VERTICAL FOV using a
+     * rectilinear (gnomonic) projection. Two conversions are applied:
+     *
+     *   1. Stereographic → gnomonic equivalent (so angular distances stay
+     *      uniform across the field instead of stretching at the edges):
+     *        gnomonicFov = 2 * atan(2 * tan(stereoFov / 4))
+     *
+     *   2. Min-dimension → vertical (since portrait phones have W < H):
+     *        verticalFov = 2 * atan(tan(minDimFov / 2) * (H / W))
      */
     function updateProjection(camera: THREE.PerspectiveCamera, fov: number) {
-      camera.fov = Math.min(fov, 150);
+      const fovRad = (Math.min(fov, 175) * Math.PI) / 180;
+
+      // Step 1: stereographic → gnomonic-equivalent for the MIN dimension.
+      const minDimGnomonic = 2 * Math.atan(2 * Math.tan(fovRad / 4));
+
+      // Step 2: min-dimension → vertical (Three.js's camera.fov axis).
+      let vFovRad: number;
+      if (H >= W) {
+        // Portrait: min dim = width. Vertical is the larger dimension.
+        vFovRad = 2 * Math.atan(Math.tan(minDimGnomonic / 2) * (H / W));
+      } else {
+        // Landscape: min dim = height, which IS the vertical FOV.
+        vFovRad = minDimGnomonic;
+      }
+
+      // Three.js's vertical FOV cannot exceed ~178°; clamp safely.
+      const vFovDeg = Math.min(178, (vFovRad * 180) / Math.PI);
+      camera.fov = vFovDeg;
       camera.updateProjectionMatrix();
     }
 
@@ -822,14 +860,19 @@ function SkyRendererImpl(props: Props) {
           vec4 mvPos = modelViewMatrix * vec4(pos, 1.0);
           gl_Position = projectionMatrix * mvPos;
 
-          // Point size — visible dots with bright stars standing out.
+          // Point size — the per-star size attribute (computed CPU-side
+          // from a Pogson flux^0.45 curve) provides a steep brightness
+          // differentiation. Bright stars get an extra multiplicative boost
+          // so they pop with a strong halo at any zoom level.
           float zoomScale = 60.0 / max(uFov, 5.0);
-          zoomScale = clamp(zoomScale, 0.8, 3.0);
-          // Boost brighter stars more noticeably
-          float magFrac = clamp(1.0 - mag / uMaxMag, 0.0, 1.0);
-          float magBoost = 1.0 + magFrac * magFrac * 2.5;
-          float ptSize = size * uDpr * zoomScale * magBoost * 1.8;
-          gl_PointSize = clamp(ptSize, 2.0, 16.0);
+          zoomScale = clamp(zoomScale, 0.7, 3.0);
+          // brightBoost: 1.0 baseline, up to 1.7× for stars of mag ≤ 1
+          // (Sirius/Vega/Arcturus territory) so they really stand out.
+          float brightFactor = clamp((1.5 - mag) * 0.4, 0.0, 1.0);
+          float brightBoost = 1.0 + brightFactor * 0.7;
+          float ptSize = size * uDpr * zoomScale * brightBoost * 1.1;
+          // Wide clamp range so brightness ratio survives at all zooms.
+          gl_PointSize = clamp(ptSize, 1.0, 50.0);
           vPtSize = gl_PointSize;
 
           // Color: desaturate (real stars look mostly white with subtle tint)
@@ -849,17 +892,28 @@ function SkyRendererImpl(props: Props) {
           // Bright core: tight gaussian for a crisp center
           float core = exp(-dist * dist / 0.02);
 
-          // Soft glow: wider gaussian halo around the star
-          float glow = exp(-dist * dist / 0.06) * 0.6;
+          // Soft inner glow — slightly amplified for brighter stars.
+          float glow = exp(-dist * dist / 0.06) * (0.45 + vColor.a * 0.45);
 
-          // Outer bloom: very faint, wide spread for bright stars
-          float bloom = exp(-dist * dist / 0.12) * 0.2 * clamp((vPtSize - 2.0) / 3.0, 0.0, 1.0);
+          // Halo: quadratic falloff that naturally reaches zero at the
+          // sprite edge (dist == 0.5). Avoids the visible square outline
+          // a gaussian-only halo creates when its tails are non-zero at
+          // the corners of the point sprite. Scales with brightness² so
+          // bright stars get a much wider visible halo.
+          float r = max(0.0, 1.0 - dist * 2.0);
+          float halo = r * r * 0.55 * vColor.a * vColor.a;
 
-          float profile = clamp(core + glow + bloom, 0.0, 1.0);
+          float profile = clamp(core + glow + halo, 0.0, 1.0);
 
-          float alpha = vColor.a * profile;
+          // Soft circular cutoff at the very edge, anti-aliasing the
+          // sprite's square boundary so no stair-step shows up.
+          float edgeFade = smoothstep(0.5, 0.46, dist);
+
+          float alpha = vColor.a * profile * edgeFade;
           if (alpha < 0.003) discard;
-          gl_FragColor = vec4(vColor.rgb * (1.0 + core * 0.3), alpha);
+          // Subtle white-hot core boost for brightest stars.
+          float coreBoost = core * (0.3 + vColor.a * 0.4);
+          gl_FragColor = vec4(vColor.rgb * (1.0 + coreBoost), alpha);
         }
       `,
       vertexColors: true,
@@ -1769,13 +1823,33 @@ function SkyRendererImpl(props: Props) {
     }
     moonDotsRef.current = moonDotMap;
 
+    // --- Orbital path (line for selected planet/moon/sun) ---
+    const orbitalPathMaxPoints = 48;
+    const orbitalPathGeo = new THREE.BufferGeometry();
+    const orbitalPathPositions = new Float32Array(orbitalPathMaxPoints * 3);
+    orbitalPathGeo.setAttribute('position', new THREE.BufferAttribute(orbitalPathPositions, 3));
+    orbitalPathGeo.setDrawRange(0, 0);
+    const orbitalPathMat = new THREE.LineBasicMaterial({
+      color: 0xffd700,
+      transparent: true,
+      opacity: 0.6,
+      depthTest: false,
+    });
+    const orbitalPathLine = new THREE.Line(orbitalPathGeo, orbitalPathMat);
+    orbitalPathLine.visible = false;
+    orbitalPathLine.renderOrder = 50;
+    scene.add(orbitalPathLine);
+    orbitalPathRef.current = orbitalPathLine;
+
     // --- Render loop ---
     const startTime = Date.now();
     let lastLabelTime = 0;
+    let projectionInitialized = false;
     // Persistent per-frame temporaries — allocated once, reused every frame
     // (avoids GC churn in the render path).
     const TMP_Q = new THREE.Quaternion();
     const TMP_OBJ = new THREE.Object3D();
+    const TMP_EULER = new THREE.Euler();
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
       const p = propsRef.current;
@@ -1794,10 +1868,9 @@ function SkyRendererImpl(props: Props) {
 
       if (p.pointingRef && p.arMode !== false && p.pointingRef.current.ready) {
         const [qx, qy, qz, qw] = p.pointingRef.current.quaternion;
-        // Smoothing factor: higher = more responsive (less lag).
-        // At wide FOV (60°) use 0.5 for near-instant response.
-        // At deep zoom (< 10°) use 0.08 for stability against hand tremor.
-        const smoothFactor = Math.max(0.08, Math.min(0.5, currentFov / 120));
+        // Smoothing factor: more smoothing at lower FOV (higher zoom)
+        // FOV 60° → factor 0.3 (responsive), FOV 10° → factor 0.06 (very smooth)
+        const smoothFactor = Math.max(0.06, Math.min(0.4, currentFov / 200));
         // SLERP toward the raw sensor quaternion (reused temporary — no alloc).
         TMP_Q.set(qx, qy, qz, qw);
         c.quaternion.slerp(TMP_Q, smoothFactor);
@@ -1816,9 +1889,10 @@ function SkyRendererImpl(props: Props) {
 
       const fovDelta = Math.abs(currentFov - lastFov.current);
       const fovChanged = fovDelta > 0.05;
-      if (fovChanged || frameRef.current === 0) {
+      if (fovChanged || !projectionInitialized) {
         updateProjection(c, currentFov);
         lastFov.current = currentFov;
+        projectionInitialized = true;
       }
 
       // Rotate the sky group by LST and latitude
@@ -1906,13 +1980,53 @@ function SkyRendererImpl(props: Props) {
       if (t - lastLabelTime > 0.1) {
         lastLabelTime = t;
         rebuildLabels(p, c);
-
-        // Update satellite dot meshes (same rate as labels)
-        updateSatelliteMeshes(p);
       }
+
+      // Satellites move fast — update every frame using interpolation between
+      // pre-computed snapshots so motion is smooth (60fps) without running
+      // SGP4 propagation 60 times a second for ~200 satellites.
+      updateSatelliteMeshes(p);
 
       // Keep billboards facing camera every frame
       faceBillboards(c);
+
+      // Counter-rotate label sprites so text stays upright regardless of
+      // phone roll, AND scale them by FOV so they remain a constant pixel
+      // size on screen rather than ballooning when zoomed in.
+      //
+      // Three.js sprites with sizeAttenuation:true have a fixed angular size,
+      // so their pixel size grows as ~1/FOV. Multiplying scale by
+      // (currentFov / REF_FOV) cancels that out and gives constant px size.
+      TMP_EULER.setFromQuaternion(c.quaternion, 'YXZ');
+      const rollAngle = TMP_EULER.z; // camera roll in radians
+      const REF_FOV = 30;
+      const fovScale = Math.max(0.4, Math.min(4, currentFov / REF_FOV));
+
+      // Helper to apply constant-pixel-size scaling to a sprite.
+      const scaleSpriteToFov = (s: THREE.Sprite, applyRoll: boolean) => {
+        if (!s.visible) return;
+        if (applyRoll) s.material.rotation = -rollAngle;
+        const ud = s.userData as { baseX?: number; baseY?: number };
+        if (ud.baseX === undefined) {
+          ud.baseX = s.scale.x;
+          ud.baseY = s.scale.y;
+        }
+        s.scale.set(ud.baseX * fovScale, ud.baseY * fovScale, 1);
+      };
+
+      // Dynamic labels (stars, planets, satellites, DSOs, constellations…)
+      for (let i = 0; i < labelSprites.current.length; i++) {
+        scaleSpriteToFov(labelSprites.current[i], true);
+      }
+      // Coordinate grid labels (alt/az/equatorial)
+      for (let i = 0; i < altGridLabels.length; i++) scaleSpriteToFov(altGridLabels[i], true);
+      for (let i = 0; i < azGridLabels.length; i++) scaleSpriteToFov(azGridLabels[i], true);
+      for (let i = 0; i < eqGridLabels.length; i++) scaleSpriteToFov(eqGridLabels[i], true);
+      // Satellite icons (sprites under satMeshes — keep upright but no roll
+      // counter-rotation needed since the icon is symmetric).
+      for (let i = 0; i < satMeshes.current.length; i++) {
+        scaleSpriteToFov(satMeshes.current[i] as unknown as THREE.Sprite, false);
+      }
 
       // Show only the constellation art closest to screen center
       updateConstArtVisibility(c);
@@ -1988,12 +2102,29 @@ function SkyRendererImpl(props: Props) {
       const mag = star.magnitude;
       buf.mags[i] = mag;
 
-      const lumRaw = Math.pow(10, -0.4 * (mag - 10.0));
-      const luminance = Math.min(1.0, Math.max(0, lumRaw));
+      // Map magnitude to a normalized brightness factor in [0, 1] using
+      // Pogson's flux ratio (each magnitude ≈ 2.512× brightness).
+      // Reference: mag 5 = "1×" flux. Brighter stars get a flux > 1 (which
+      // we use to drive larger size and stronger glow), faint stars < 1.
+      //
+      // We keep the *raw* flux for the size curve (it spans many decades
+      // for naked-eye-visible stars), and apply a soft cap for alpha so
+      // faint stars stay visibly dimmer while the brightest still stand out.
+      const flux = Math.pow(2.512, 5 - mag);
+
+      // Alpha — capped at 1.0 (brightest stars), with a clear gradient
+      // through the visible range so dim stars look genuinely dimmer.
+      // Mag -1.5 → 1.0, Mag 0 → 1.0, Mag 2 → 0.82, Mag 3 → 0.66,
+      // Mag 5 → 0.42, Mag 6.5 → 0.33.
+      const luminance = Math.min(1.0, 0.2 + Math.pow(flux, 0.35) * 0.22);
       buf.lums[i] = luminance;
 
-      let radius = 0.9 * Math.pow(luminance, 0.4);
-      if (radius < 0.2) radius = 0.2;
+      // Radius — steep flux^0.45 curve gives ~8× size ratio between Sirius
+      // and a mag-5 star. Combined with the shader-side bright-boost and
+      // bloom that scales with alpha, the brightest stars dominate visually
+      // while faint stars stay as crisp small dots.
+      // Mag -1.5 → 9.3, Mag 0 → 6.3, Mag 2 → 3.0, Mag 5 → 1.15, Mag 6.5 → 0.83
+      const radius = 0.45 + Math.pow(flux, 0.45) * 0.7;
       buf.sizes[i] = radius;
 
       buf.seeds[i] = Math.abs(Math.sin(x * 12.9898 + y * 78.233 + z * 45.164)) % 1.0;
@@ -2058,6 +2189,13 @@ function SkyRendererImpl(props: Props) {
   const labelCache = useRef<Map<string, THREE.Sprite>>(new Map());
 
   // --- Satellite dot meshes ---
+  /**
+   * Render satellite icons with smooth motion via per-frame interpolation
+   * between two SGP4 snapshots (now and now + 1s) computed in useSkyEngine.
+   * The renderer linearly blends azimuth and altitude based on elapsed time
+   * since the "prev" snapshot, giving 60fps smoothness without running SGP4
+   * every frame for ~200 satellites.
+   */
   function updateSatelliteMeshes(p: Props) {
     const scene = sceneRef.current;
     if (!scene || !p.showLayers.satellites || !p.satellitePositions) {
@@ -2065,16 +2203,40 @@ function SkyRendererImpl(props: Props) {
       return;
     }
 
-    // Collect visible satellites
-    const clipBelow = p.showGround;
-    const visibleSats: Array<{ az: number; alt: number }> = [];
-    for (const [, sat] of p.satellitePositions) {
-      if (!sat || sat.type) continue;
-      if (clipBelow && sat.altitude < 0) continue;
-      visibleSats.push({ az: sat.azimuth, alt: sat.altitude });
+    // Compute interpolation factor 0..1 between the two snapshots.
+    const time = p.satelliteTimeRef?.current;
+    const nextMap = p.satellitePositionsNextRef?.current;
+    let alpha = 0;
+    if (time && time.next > time.prev) {
+      const span = time.next - time.prev;
+      alpha = (Date.now() - time.prev) / span;
+      // Clamp to [0, 1.5] — allow a small overshoot if the next tick is late
+      // (predicted positions remain accurate for a brief extrapolation).
+      alpha = Math.max(0, Math.min(1.5, alpha));
     }
 
-    // Ensure we have enough sprites in the pool
+    // Collect visible satellites with interpolated positions.
+    const clipBelow = p.showGround;
+    const visibleSats: Array<{ az: number; alt: number }> = [];
+    for (const [key, sat] of p.satellitePositions) {
+      if (!sat || sat.type) continue;
+      let az = sat.azimuth;
+      let alt = sat.altitude;
+      if (nextMap && alpha > 0) {
+        const nxt = nextMap.get(key);
+        if (nxt && !nxt.type) {
+          // Shortest-path azimuth interpolation (handles 360° wrap).
+          let dAz = nxt.azimuth - sat.azimuth;
+          if (dAz > 180) dAz -= 360;
+          else if (dAz < -180) dAz += 360;
+          az = ((sat.azimuth + dAz * alpha) % 360 + 360) % 360;
+          alt = sat.altitude + (nxt.altitude - sat.altitude) * alpha;
+        }
+      }
+      if (clipBelow && alt < 0) continue;
+      visibleSats.push({ az, alt });
+    }
+
     // Create satellite icon texture once (pixel-drawn satellite shape)
     if (!satTexRef.current) {
       const size = 32;
@@ -2276,7 +2438,10 @@ function SkyRendererImpl(props: Props) {
           if (!dso.isVisible) continue;
           if (clipBelow && dso.altitude < 0) continue;
           const [wx, wy, wz] = eqToWorld(dso.object.ra, dso.object.dec + 0.5, CR);
-          candidates.push({ wx, wy, wz, text: dso.object.id, color: '#0cc', scale: 6.0, priority: 5 });
+          const dsoLabel = dso.object.name
+            ? `${dso.object.id} ${dso.object.name}`
+            : dso.object.id;
+          candidates.push({ wx, wy, wz, text: dsoLabel, color: '#0cc', scale: 6.0, priority: 5 });
         }
       }
 
@@ -2310,8 +2475,17 @@ function SkyRendererImpl(props: Props) {
       const sy = (-projVec.y * 0.5 + 0.5) * H;
       if (sx < -50 || sx > W + 50 || sy < -30 || sy > H + 30) continue;
 
-      const hw = c.text.length * 5 + 4;
-      const hh = 8;
+      // Estimate the label's on-screen pixel half-extents for deconfliction.
+      // Text height in pixels ≈ scale (worldScale) × screen-height-per-radian
+      // factor. After the constant-pixel-size scaling we apply per-frame
+      // (animate loop), the rendered size is roughly proportional to scale
+      // and independent of FOV. The tuned coefficients below give a tight
+      // bounding box that matches the actual glyph extents from glLabels.ts.
+      const charHalfWidth = 3.6; // approx half-width per character at scale=6
+      const lineHalf = 7.5;      // approx half-height at scale=6
+      const scaleFactor = c.scale / 6;
+      const hw = (c.text.length * charHalfWidth + 4) * scaleFactor;
+      const hh = lineHalf * scaleFactor;
       let overlaps = false;
       for (const p2 of placed) {
         if (Math.abs(sx - p2.sx) < (hw + p2.hw) && Math.abs(sy - p2.sy) < (hh + p2.hh)) { overlaps = true; break; }
@@ -2513,6 +2687,73 @@ function SkyRendererImpl(props: Props) {
       sunMeshRef.current.scale.setScalar(sScale);
     } else if (sunMeshRef.current) {
       sunMeshRef.current.visible = false;
+    }
+
+    // --- Orbital path for selected planet/moon/sun ---
+    if (orbitalPathRef.current) {
+      const selRef = p.selectedObjectRef?.current;
+      const selName = selRef?.name ?? null;
+      const selType = selRef?.type ?? null;
+      const shouldShowPath = selName && (selType === 'Planet' || selType === 'Moon' || selType === 'Sun');
+
+      if (shouldShowPath) {
+        const pathLine = orbitalPathRef.current;
+        const geo = pathLine.geometry as THREE.BufferGeometry;
+        const posAttr = geo.attributes.position as THREE.BufferAttribute;
+        const positions = posAttr.array as Float32Array;
+
+        let currentAz = 0, currentAlt = 0;
+        let found = false;
+
+        if (selType === 'Moon' && p.moonPosition) {
+          currentAz = p.moonPosition.azimuth;
+          currentAlt = p.moonPosition.altitude;
+          found = true;
+        } else if (selType === 'Sun' && p.sunPosition) {
+          currentAz = p.sunPosition.azimuth;
+          currentAlt = p.sunPosition.altitude;
+          found = true;
+        } else if (selType === 'Planet') {
+          for (const planet of p.planets) {
+            if (planet.name === selName) {
+              const pos = p.planetPositions.get(planet.id);
+              if (pos) {
+                currentAz = pos.azimuth;
+                currentAlt = pos.altitude;
+                found = true;
+              }
+              break;
+            }
+          }
+        }
+
+        if (found) {
+          let ptCount = 0;
+          for (let i = 0; i < 48; i++) {
+            const hourOffset = (i - 24) * 0.5;
+            const az = ((currentAz - hourOffset * 15) % 360 + 360) % 360;
+            const altOffset = hourOffset * hourOffset * -0.8;
+            const alt = Math.max(-10, currentAlt + altOffset);
+            const [x, y, z] = hz2v(az, alt, CR - 5);
+            positions[ptCount * 3] = x;
+            positions[ptCount * 3 + 1] = y;
+            positions[ptCount * 3 + 2] = z;
+            ptCount++;
+          }
+          posAttr.needsUpdate = true;
+          geo.setDrawRange(0, ptCount);
+          pathLine.visible = true;
+
+          const mat = pathLine.material as THREE.LineBasicMaterial;
+          if (selType === 'Sun') mat.color.setHex(0xffa500);
+          else if (selType === 'Moon') mat.color.setHex(0xccccff);
+          else mat.color.setHex(0xffd700);
+        } else {
+          orbitalPathRef.current.visible = false;
+        }
+      } else {
+        orbitalPathRef.current.visible = false;
+      }
     }
 
     // --- Deep sky objects — reuse meshes from pool ---

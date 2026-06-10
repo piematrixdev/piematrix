@@ -17,6 +17,8 @@ import EventsPanel from './panels/EventsPanel';
 import UsersPanel from './panels/UsersPanel';
 import EmailPanel from './panels/EmailPanel';
 import PushPanel from './panels/PushPanel';
+import SkyCalendarPanel from './panels/SkyCalendarPanel';
+import SupportConfigPanel from './panels/SupportConfigPanel';
 import ComingSoonPanel from './panels/ComingSoonPanel';
 
 type SectionId =
@@ -50,8 +52,8 @@ const NAV: NavItem[] = [
   { id: 'users', label: 'Users', icon: '⊙', group: 'Engagement' },
   { id: 'emails', label: 'Emails', icon: '✉', group: 'Engagement' },
   { id: 'push', label: 'Push Notifications', icon: '⊕', group: 'Engagement' },
-  { id: 'celestial', label: 'Celestial Info', icon: '✶', group: 'Reserved', soon: true },
-  { id: 'alerts', label: 'Sky Alerts', icon: '✸', group: 'Reserved', soon: true },
+  { id: 'celestial', label: 'Sky Calendar', icon: '✶', group: 'Content' },
+  { id: 'alerts', label: 'Support Config', icon: '✸', group: 'Engagement' },
 ];
 
 interface Props {
@@ -88,19 +90,9 @@ export default function AdminDashboard({ email, role }: Props) {
       case 'push':
         return <PushPanel />;
       case 'celestial':
-        return (
-          <ComingSoonPanel
-            title="Celestial Info"
-            blurb="Manage the educational content shown for constellations, planets, and deep-sky objects. Reserved for a later release."
-          />
-        );
+        return <SkyCalendarPanel />;
       case 'alerts':
-        return (
-          <ComingSoonPanel
-            title="Sky Alerts"
-            blurb="Broadcast meteor showers, eclipses, and special events to all users. Reserved for a later release."
-          />
-        );
+        return <SupportConfigPanel />;
       default:
         return null;
     }

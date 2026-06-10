@@ -17,9 +17,11 @@ const { width: W } = Dimensions.get('window');
 const CARD_W = (W - 48) / 2; // 2-column grid with gaps
 
 const F_LIGHT = 'Poppins-Light';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 
 interface CategoryScreenProps {
   collectionHandle: string;

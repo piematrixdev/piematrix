@@ -12,9 +12,11 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from './AuthContext';
 
 const F_LIGHT = 'Poppins-Light';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 
 export default function ResetPasswordScreen() {
   const { updatePassword, clearPasswordRecovery } = useAuth();

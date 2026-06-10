@@ -15,9 +15,11 @@ import LazyImage from './components/LazyImage';
 const { width: W } = Dimensions.get('window');
 
 const F_LIGHT = 'Poppins-Light';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 
 const COLLECTION_HANDLES = [
   'telescopes',
@@ -116,7 +118,7 @@ export default function ShopScreen({ onClose, onProductSelect, onCategorySelect 
             <ArrowRight2 size={16} color="rgba(255,255,255,0.5)" variant="Linear" />
           </TouchableOpacity>
 
-          <View style={{ height: 50 }} />
+          <View style={{ height: 140 }} />
         </ScrollView>
       )}
     </View>

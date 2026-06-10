@@ -7,35 +7,43 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1178204D41A2FA3F8F8FC30C /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D5353D5F4EE9B89C3BCDAB0 /* ExpoModulesProvider.swift */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
-		25CA07026657472B9ED98F9E /* Poppins-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 3BB73596BDA241AA8E055E25 /* Poppins-Light.ttf */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		48316571C941482E8C09E0D0 /* Poppins-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = B549B8660D2D4530A318F5F9 /* Poppins-Regular.ttf */; };
-		5578578D959785829CB4E06C /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 50762B1E8E60DCE662593E1C /* PrivacyInfo.xcprivacy */; };
-		8A355C454A4B61C48E011939 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47A6D81354DA0550548C9B88 /* ExpoModulesProvider.swift */; };
+		3E91610DB6EB457681E85D26 /* Poppins-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 7391B082BE9B4E15B74E4AD6 /* Poppins-Regular.ttf */; };
+		414BC2940E1093BFF3A26275 /* libPods-PieMatrix.a in Frameworks */ = {isa = PBXBuildFile; fileRef = ECAB616A74564EDA2F1B674F /* libPods-PieMatrix.a */; };
+		4D0009C8753B43FE9FD9B6A7 /* Poppins-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = E0EBFA7C58D6433492A63446 /* Poppins-Medium.ttf */; };
+		59A9190A461D480F9670F79D /* Poppins-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 4E3D8749CF7C4F44809D2416 /* Poppins-SemiBold.ttf */; };
+		70C27533CE48490D84A97D58 /* Poppins-ExtraBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2852ADAB22F440488DDC507B /* Poppins-ExtraBold.ttf */; };
+		974D6E5FD6BE4781A81B557D /* Poppins-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = DAC8A282EB084EA09B6BF006 /* Poppins-Bold.ttf */; };
+		A416A01765B04F4B8FD280B5 /* Poppins-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 5FBAF62E2B7D468F8A929860 /* Poppins-Light.ttf */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		D770B36A32C04C3685C10E63 /* Poppins-Bold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = F7716D59090B4AF4B12F006C /* Poppins-Bold.ttf */; };
-		DB9000B36495ECCCFE864B69 /* libPods-PieMatrix.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 3FA2F447D12073038AFACD38 /* libPods-PieMatrix.a */; };
+		BCD1778B73356F8CA8250AA4 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EDF881C1DDA25011AA7EFDD9 /* PrivacyInfo.xcprivacy */; };
+		CBB573FA9011468F95B16455 /* Poppins-Black.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 49015649F15E4D3BA2840B2A /* Poppins-Black.ttf */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0D5353D5F4EE9B89C3BCDAB0 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-PieMatrix/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
 		13B07F961A680F5B00A75B9A /* PieMatrix.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PieMatrix.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = PieMatrix/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = PieMatrix/Info.plist; sourceTree = "<group>"; };
-		28D913907FCCDC20CCE52B06 /* Pods-PieMatrix.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PieMatrix.debug.xcconfig"; path = "Target Support Files/Pods-PieMatrix/Pods-PieMatrix.debug.xcconfig"; sourceTree = "<group>"; };
-		3BB73596BDA241AA8E055E25 /* Poppins-Light.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Light.ttf"; path = "../assets/fonts/Poppins-Light.ttf"; sourceTree = "<group>"; };
-		3FA2F447D12073038AFACD38 /* libPods-PieMatrix.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-PieMatrix.a"; sourceTree = BUILT_PRODUCTS_DIR; };
-		47A6D81354DA0550548C9B88 /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-PieMatrix/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
-		50762B1E8E60DCE662593E1C /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = PieMatrix/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		7DBE0C0E9F47D6C693346A1F /* Pods-PieMatrix.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PieMatrix.release.xcconfig"; path = "Target Support Files/Pods-PieMatrix/Pods-PieMatrix.release.xcconfig"; sourceTree = "<group>"; };
+		2852ADAB22F440488DDC507B /* Poppins-ExtraBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-ExtraBold.ttf"; path = "../assets/fonts/Poppins-ExtraBold.ttf"; sourceTree = "<group>"; };
+		49015649F15E4D3BA2840B2A /* Poppins-Black.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Black.ttf"; path = "../assets/fonts/Poppins-Black.ttf"; sourceTree = "<group>"; };
+		4E3D8749CF7C4F44809D2416 /* Poppins-SemiBold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-SemiBold.ttf"; path = "../assets/fonts/Poppins-SemiBold.ttf"; sourceTree = "<group>"; };
+		5FBAF62E2B7D468F8A929860 /* Poppins-Light.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Light.ttf"; path = "../assets/fonts/Poppins-Light.ttf"; sourceTree = "<group>"; };
+		7391B082BE9B4E15B74E4AD6 /* Poppins-Regular.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Regular.ttf"; path = "../assets/fonts/Poppins-Regular.ttf"; sourceTree = "<group>"; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = PieMatrix/SplashScreen.storyboard; sourceTree = "<group>"; };
-		B549B8660D2D4530A318F5F9 /* Poppins-Regular.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Regular.ttf"; path = "../assets/fonts/Poppins-Regular.ttf"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
+		C28193DCC830AB5C1862173D /* Pods-PieMatrix.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PieMatrix.debug.xcconfig"; path = "Target Support Files/Pods-PieMatrix/Pods-PieMatrix.debug.xcconfig"; sourceTree = "<group>"; };
+		C90A326D3542D6816F8F1311 /* Pods-PieMatrix.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PieMatrix.release.xcconfig"; path = "Target Support Files/Pods-PieMatrix/Pods-PieMatrix.release.xcconfig"; sourceTree = "<group>"; };
+		DAC8A282EB084EA09B6BF006 /* Poppins-Bold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Bold.ttf"; path = "../assets/fonts/Poppins-Bold.ttf"; sourceTree = "<group>"; };
+		E0EBFA7C58D6433492A63446 /* Poppins-Medium.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Medium.ttf"; path = "../assets/fonts/Poppins-Medium.ttf"; sourceTree = "<group>"; };
+		ECAB616A74564EDA2F1B674F /* libPods-PieMatrix.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = "libPods-PieMatrix.a"; sourceTree = BUILT_PRODUCTS_DIR; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		EDF881C1DDA25011AA7EFDD9 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = PieMatrix/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = PieMatrix/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* PieMatrix-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "PieMatrix-Bridging-Header.h"; path = "PieMatrix/PieMatrix-Bridging-Header.h"; sourceTree = "<group>"; };
-		F7716D59090B4AF4B12F006C /* Poppins-Bold.ttf */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = unknown; name = "Poppins-Bold.ttf"; path = "../assets/fonts/Poppins-Bold.ttf"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -43,13 +51,22 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DB9000B36495ECCCFE864B69 /* libPods-PieMatrix.a in Frameworks */,
+				414BC2940E1093BFF3A26275 /* libPods-PieMatrix.a in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0325F368E9B5AC1A2D74A2F6 /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				C28193DCC830AB5C1862173D /* Pods-PieMatrix.debug.xcconfig */,
+				C90A326D3542D6816F8F1311 /* Pods-PieMatrix.release.xcconfig */,
+			);
+			path = Pods;
+			sourceTree = "<group>";
+		};
 		13B07FAE1A68108700A75B9A /* PieMatrix */ = {
 			isa = PBXGroup;
 			children = (
@@ -59,27 +76,32 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				50762B1E8E60DCE662593E1C /* PrivacyInfo.xcprivacy */,
+				EDF881C1DDA25011AA7EFDD9 /* PrivacyInfo.xcprivacy */,
 			);
 			name = PieMatrix;
+			sourceTree = "<group>";
+		};
+		1E5BF429FE6B444FA6514F3C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				5FBAF62E2B7D468F8A929860 /* Poppins-Light.ttf */,
+				7391B082BE9B4E15B74E4AD6 /* Poppins-Regular.ttf */,
+				E0EBFA7C58D6433492A63446 /* Poppins-Medium.ttf */,
+				4E3D8749CF7C4F44809D2416 /* Poppins-SemiBold.ttf */,
+				DAC8A282EB084EA09B6BF006 /* Poppins-Bold.ttf */,
+				2852ADAB22F440488DDC507B /* Poppins-ExtraBold.ttf */,
+				49015649F15E4D3BA2840B2A /* Poppins-Black.ttf */,
+			);
+			name = Resources;
 			sourceTree = "<group>";
 		};
 		2D16E6871FA4F8E400B85C8A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				3FA2F447D12073038AFACD38 /* libPods-PieMatrix.a */,
+				ECAB616A74564EDA2F1B674F /* libPods-PieMatrix.a */,
 			);
 			name = Frameworks;
-			sourceTree = "<group>";
-		};
-		4A2CA207054C53870BF9EB50 /* Pods */ = {
-			isa = PBXGroup;
-			children = (
-				28D913907FCCDC20CCE52B06 /* Pods-PieMatrix.debug.xcconfig */,
-				7DBE0C0E9F47D6C693346A1F /* Pods-PieMatrix.release.xcconfig */,
-			);
-			path = Pods;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -96,9 +118,9 @@
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				C37BA4205205404C9D02DEA2 /* Resources */,
-				4A2CA207054C53870BF9EB50 /* Pods */,
-				AF4B2D4F748573E0E08240C3 /* ExpoModulesProviders */,
+				1E5BF429FE6B444FA6514F3C /* Resources */,
+				0325F368E9B5AC1A2D74A2F6 /* Pods */,
+				C55750ACD881281186FD0BD1 /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -113,12 +135,12 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		AF4B2D4F748573E0E08240C3 /* ExpoModulesProviders */ = {
+		A75CE6FD41B90C48709A86A7 /* PieMatrix */ = {
 			isa = PBXGroup;
 			children = (
-				D04B37559733F9325D21E250 /* PieMatrix */,
+				0D5353D5F4EE9B89C3BCDAB0 /* ExpoModulesProvider.swift */,
 			);
-			name = ExpoModulesProviders;
+			name = PieMatrix;
 			sourceTree = "<group>";
 		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
@@ -130,22 +152,12 @@
 			path = PieMatrix/Supporting;
 			sourceTree = "<group>";
 		};
-		C37BA4205205404C9D02DEA2 /* Resources */ = {
+		C55750ACD881281186FD0BD1 /* ExpoModulesProviders */ = {
 			isa = PBXGroup;
 			children = (
-				3BB73596BDA241AA8E055E25 /* Poppins-Light.ttf */,
-				B549B8660D2D4530A318F5F9 /* Poppins-Regular.ttf */,
-				F7716D59090B4AF4B12F006C /* Poppins-Bold.ttf */,
+				A75CE6FD41B90C48709A86A7 /* PieMatrix */,
 			);
-			name = Resources;
-			sourceTree = "<group>";
-		};
-		D04B37559733F9325D21E250 /* PieMatrix */ = {
-			isa = PBXGroup;
-			children = (
-				47A6D81354DA0550548C9B88 /* ExpoModulesProvider.swift */,
-			);
-			name = PieMatrix;
+			name = ExpoModulesProviders;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -156,13 +168,13 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "PieMatrix" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				2BEFD2978BA07788E94CB34F /* [Expo] Configure project */,
+				1B1A473ABF52000CDB610CC3 /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				920A92768F6A3F41538CE6D7 /* [CP] Embed Pods Frameworks */,
+				D6428477B8E3AD987D6A32EC /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
@@ -212,10 +224,14 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				25CA07026657472B9ED98F9E /* Poppins-Light.ttf in Resources */,
-				48316571C941482E8C09E0D0 /* Poppins-Regular.ttf in Resources */,
-				D770B36A32C04C3685C10E63 /* Poppins-Bold.ttf in Resources */,
-				5578578D959785829CB4E06C /* PrivacyInfo.xcprivacy in Resources */,
+				A416A01765B04F4B8FD280B5 /* Poppins-Light.ttf in Resources */,
+				3E91610DB6EB457681E85D26 /* Poppins-Regular.ttf in Resources */,
+				4D0009C8753B43FE9FD9B6A7 /* Poppins-Medium.ttf in Resources */,
+				59A9190A461D480F9670F79D /* Poppins-SemiBold.ttf in Resources */,
+				974D6E5FD6BE4781A81B557D /* Poppins-Bold.ttf in Resources */,
+				70C27533CE48490D84A97D58 /* Poppins-ExtraBold.ttf in Resources */,
+				CBB573FA9011468F95B16455 /* Poppins-Black.ttf in Resources */,
+				BCD1778B73356F8CA8250AA4 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -261,7 +277,7 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		2BEFD2978BA07788E94CB34F /* [Expo] Configure project */ = {
+		1B1A473ABF52000CDB610CC3 /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -323,7 +339,7 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-PieMatrix/Pods-PieMatrix-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		920A92768F6A3F41538CE6D7 /* [CP] Embed Pods Frameworks */ = {
+		D6428477B8E3AD987D6A32EC /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -353,7 +369,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				8A355C454A4B61C48E011939 /* ExpoModulesProvider.swift in Sources */,
+				1178204D41A2FA3F8F8FC30C /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -362,14 +378,14 @@
 /* Begin XCBuildConfiguration section */
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 28D913907FCCDC20CCE52B06 /* Pods-PieMatrix.debug.xcconfig */;
+			baseConfigurationReference = C28193DCC830AB5C1862173D /* Pods-PieMatrix.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = PieMatrix/PieMatrix.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Developer";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 123;
 				DEVELOPMENT_TEAM = "";
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = U4TS28286B;
 				ENABLE_BITCODE = NO;
@@ -378,12 +394,14 @@
 					"FB_SONARKIT_ENABLED=1",
 				);
 				INFOPLIST_FILE = PieMatrix/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Pie Matrix - Sky Map";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.2.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -404,23 +422,24 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 7DBE0C0E9F47D6C693346A1F /* Pods-PieMatrix.release.xcconfig */;
+			baseConfigurationReference = C90A326D3542D6816F8F1311 /* Pods-PieMatrix.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = PieMatrix/PieMatrix.entitlements;
 				"CODE_SIGN_IDENTITY[sdk=iphoneos*]" = "iPhone Distribution";
-				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 2;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 123;
+				DEVELOPMENT_TEAM = H2458LP837;
 				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = U4TS28286B;
 				INFOPLIST_FILE = PieMatrix/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Pie Matrix - Sky Map";
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.education";
 				IPHONEOS_DEPLOYMENT_TARGET = 15.1;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.1;
+				MARKETING_VERSION = 1.2.3;
 				OTHER_LDFLAGS = (
 					"$(inherited)",
 					"-ObjC",
@@ -429,7 +448,6 @@
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
 				PRODUCT_BUNDLE_IDENTIFIER = com.thepiematrix.app;
 				PRODUCT_NAME = PieMatrix;
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "Pie Matrix";
 				SWIFT_OBJC_BRIDGING_HEADER = "PieMatrix/PieMatrix-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;

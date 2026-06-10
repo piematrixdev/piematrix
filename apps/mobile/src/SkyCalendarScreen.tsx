@@ -18,13 +18,16 @@ import type { GeographicCoordinates } from '@virtual-window/astronomy-engine';
 import { computeTonightsSky, TonightsSkyData } from './tonightsSky';
 import { fetchSkyEvents, fetchNasaApod, fetchStargazingWeather, SkyEvent, NasaApod, StargazingWeather, EVENT_TYPE_COLORS, EVENT_TYPE_EMOJI } from './skyEvents';
 import { getMessierImage } from './celestialImages';
+import { getEventsForDate, CalendarEvent, EVENT_COLORS, prefetchCalendarEvents } from './calendarEvents';
 import LazyImage from './components/LazyImage';
 
 const { width: W, height: H } = Dimensions.get('window');
 const F_LIGHT = 'Poppins-Light';
 const F_REG = 'Poppins-Regular';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June',
@@ -118,6 +121,13 @@ export default function SkyCalendarScreen({ observer, onClose }: Props) {
   const [dsoImages, setDsoImages] = useState<Map<string, string>>(new Map());
   const [imagePopup, setImagePopup] = useState<{ url: string; title: string; desc?: string } | null>(null);
   const flatListRef = useRef<FlatList>(null);
+
+  // Prefetch calendar events for the next 60 days on mount
+  useEffect(() => {
+    const start = new Date();
+    start.setDate(start.getDate() - 7);
+    prefetchCalendarEvents(start, 60).catch(() => {});
+  }, []);
 
   // Generate 30 days of dates centered on today
   const dates = useRef<Date[]>([]);
@@ -222,7 +232,9 @@ export default function SkyCalendarScreen({ observer, onClose }: Props) {
       {/* Date strip — horizontal scrollable day pills */}
       <View style={s.dateStripWrap}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.dateStrip}>
-          {dates.current.map((d, i) => (
+          {dates.current.map((d, i) => {
+            const dayEvents = getEventsForDate(d);
+            return (
             <TouchableOpacity
               key={i}
               style={[s.datePill, isSameDay(d, selectedDate) && s.datePillActive]}
@@ -234,9 +246,18 @@ export default function SkyCalendarScreen({ observer, onClose }: Props) {
               <Text style={[s.datePillNum, isSameDay(d, selectedDate) && s.datePillNumActive]}>
                 {d.getDate()}
               </Text>
-              {isToday(d) && <View style={s.todayDot} />}
+              {dayEvents.length > 0 ? (
+                <View style={s.eventDotsRow}>
+                  {dayEvents.slice(0, 3).map((ev, idx) => (
+                    <View key={idx} style={[s.eventDotSmall, { backgroundColor: ev.color }]} />
+                  ))}
+                </View>
+              ) : isToday(d) ? (
+                <View style={s.todayDot} />
+              ) : null}
             </TouchableOpacity>
-          ))}
+            );
+          })}
         </ScrollView>
       </View>
 
@@ -258,7 +279,10 @@ export default function SkyCalendarScreen({ observer, onClose }: Props) {
               {DAYS.map(d => <Text key={d} style={s.calWeekDay}>{d}</Text>)}
             </View>
             <View style={s.calGrid}>
-              {calendarDays().map((day, i) => (
+              {calendarDays().map((day, i) => {
+                const cellDate = day ? new Date(calYear, calMonth, day) : null;
+                const cellEvents = cellDate ? getEventsForDate(cellDate) : [];
+                return (
                 <TouchableOpacity
                   key={i}
                   style={[s.calCell, day !== null && isSameDay(new Date(calYear, calMonth, day), selectedDate) ? s.calCellActive : undefined]}
@@ -270,11 +294,20 @@ export default function SkyCalendarScreen({ observer, onClose }: Props) {
                       <Text style={[s.calCellText, isSameDay(new Date(calYear, calMonth, day), selectedDate) && s.calCellTextActive]}>
                         {day}
                       </Text>
-                      <Text style={s.calCellMoon}>{moonPhaseForDate(new Date(calYear, calMonth, day))}</Text>
+                      {cellEvents.length > 0 ? (
+                        <View style={s.calCellDots}>
+                          {cellEvents.slice(0, 2).map((ev, idx) => (
+                            <View key={idx} style={[s.calCellEventDot, { backgroundColor: ev.color }]} />
+                          ))}
+                        </View>
+                      ) : (
+                        <Text style={s.calCellMoon}>{moonPhaseForDate(new Date(calYear, calMonth, day))}</Text>
+                      )}
                     </>
                   ) : null}
                 </TouchableOpacity>
-              ))}
+                );
+              })}
             </View>
           </BlurView>
         </View>
@@ -298,6 +331,32 @@ export default function SkyCalendarScreen({ observer, onClose }: Props) {
 
         {skyData ? (
           <>
+            {/* Computed astronomical events for this date */}
+            {(() => {
+              const computedEvents = getEventsForDate(selectedDate);
+              if (computedEvents.length === 0) return null;
+              return (
+                <View style={s.section}>
+                  <View style={s.sectionHead}>
+                    <Star1 size={16} color="#d4c5a0" variant="Bulk" />
+                    <Text style={s.sectionTitle}>Sky Events</Text>
+                    <Text style={s.sectionCount}>{computedEvents.length}</Text>
+                  </View>
+                  {computedEvents.map((ev, idx) => (
+                    <View key={idx} style={s.itemCard}>
+                      <View style={s.itemLeft}>
+                        <View style={[s.itemDot, { backgroundColor: ev.color }]} />
+                        <View style={{ flex: 1 }}>
+                          <Text style={s.itemTitle}>{ev.label}</Text>
+                          <Text style={s.itemDesc}>{ev.type.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</Text>
+                        </View>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              );
+            })()}
+
             {/* Backend events — curated by you */}
             {backendEvents.length > 0 && (
               <View style={s.section}>
@@ -559,6 +618,8 @@ const s = StyleSheet.create({
   datePillNum: { color: 'rgba(255,255,255,0.7)', fontSize: 16, fontFamily: F_BOLD, marginTop: 2 },
   datePillNumActive: { color: '#fff' },
   todayDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#4ade80', marginTop: 4 },
+  eventDotsRow: { flexDirection: 'row', gap: 2, marginTop: 4 },
+  eventDotSmall: { width: 4, height: 4, borderRadius: 2 },
 
   // Calendar overlay
   calOverlay: { position: 'absolute', top: 110, left: 16, right: 16, zIndex: 100, borderRadius: 20, overflow: 'hidden', shadowColor: '#000', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.6, shadowRadius: 30, elevation: 20 },
@@ -574,10 +635,12 @@ const s = StyleSheet.create({
   calCellText: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontFamily: F_REG },
   calCellTextActive: { color: '#fff', fontFamily: F_BOLD },
   calCellMoon: { fontSize: 8, marginTop: 1 },
+  calCellDots: { flexDirection: 'row', gap: 2, marginTop: 2 },
+  calCellEventDot: { width: 4, height: 4, borderRadius: 2 },
 
   // Content
   content: { flex: 1 },
-  contentInner: { paddingBottom: 40 },
+  contentInner: { paddingBottom: 140 },
 
   // Date nav
   dateNav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, paddingTop: 10, paddingBottom: 6 },

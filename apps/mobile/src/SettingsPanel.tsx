@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Modal, Image } from 'react-native';
 import {
-  Setting4, Star1, Global, Moon, Sun1, Discover, Radar, Magicpen,
+  Setting4, Star1, Global, Moon, Sun1, Discover, Magicpen,
   Text as TextIcon, CloseCircle, Building, InfoCircle, Gallery, TickCircle,
 } from 'iconsax-react-native';
 import { GROUNDS } from './grounds';
+import SkyIcon from './components/SkyIcon';
 
 const BORTLE_NAME: Record<number, string> = {
   1: 'Excellent Dark', 2: 'Dark Site', 3: 'Rural', 4: 'Rural/Suburban',
@@ -91,14 +92,14 @@ const SECTIONS: Section[] = [
         label: 'Deep Sky Objects',
         desc: 'Show galaxies, nebulae and star clusters',
         info: 'Plots Messier and well-known deep-sky objects — galaxies, glowing nebulae, and star clusters. Most need a telescope or binoculars to see for real, but they\'re great targets to find and learn.',
-        icon: <Discover size={18} color="#c9b896" variant="Bulk" />,
+        icon: <SkyIcon name="orbit" size={18} color="#c9b896" />,
       },
       {
         key: 'milkyWay',
         label: 'Milky Way',
         desc: 'Show the glowing band of our galaxy',
         info: 'Overlays the soft glowing band of the Milky Way across the sky. Visible to the naked eye only from dark sites (low Bortle), but always shown here so you can see where it arcs overhead.',
-        icon: <Discover size={18} color="#d4c5a0" variant="Bulk" />,
+        icon: <SkyIcon name="meteor" size={18} color="#d4c5a0" />,
       },
     ],
   },
@@ -110,7 +111,7 @@ const SECTIONS: Section[] = [
         label: 'Satellites',
         desc: 'Track the ISS and other satellites in real time',
         info: 'Shows satellites currently passing overhead, including the International Space Station, updated live. Bright passes can be seen with the naked eye as steady moving "stars".',
-        icon: <Radar size={18} color="#22c55e" variant="Bulk" />,
+        icon: <SkyIcon name="satellite" size={18} color="#22c55e" />,
       },
       {
         key: 'meteors',
@@ -338,7 +339,7 @@ const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#080816' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingTop: 56, paddingHorizontal: 20, paddingBottom: 16 },
   headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerTitle: { color: '#fff', fontSize: 22, fontFamily: 'TenorSans_400Regular' },
+  headerTitle: { color: '#fff', fontSize: 22, fontFamily: 'Poppins-ExtraBold' },
   body: { flex: 1, paddingHorizontal: 16 },
 
   card: { backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 14, marginBottom: 8, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
@@ -385,6 +386,6 @@ const st = StyleSheet.create({
   infoCard: { backgroundColor: '#141422', borderRadius: 18, padding: 22, width: '100%', maxWidth: 360, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   infoHead: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 14 },
   infoIconWrap: { width: 36, height: 36, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' },
-  infoTitle: { flex: 1, color: '#fff', fontSize: 18, fontFamily: 'TenorSans_400Regular' },
+  infoTitle: { flex: 1, color: '#fff', fontSize: 18, fontFamily: 'Poppins-ExtraBold' },
   infoBody: { color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 21 },
 });

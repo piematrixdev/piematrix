@@ -16,7 +16,7 @@ export const FONT_REGULAR = 'Poppins-Regular';
 export const FONT_BOLD = 'Poppins-Bold';
 
 // Display / titles — Tenor Sans (loaded at runtime via useFonts)
-export const FONT_DISPLAY = 'TenorSans_400Regular';
+export const FONT_DISPLAY = 'Poppins-Bold';
 
 /** Default title font — use for screen titles and big headings. */
 export const FONT_TITLE = FONT_DISPLAY;

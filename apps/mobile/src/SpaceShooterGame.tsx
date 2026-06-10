@@ -551,20 +551,20 @@ const s = StyleSheet.create({
 
   // HUD
   hud: { position: 'absolute', top: 50, left: 16, right: 16, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  hudText: { color: '#fff', fontSize: 14, fontFamily: 'Poppins-Bold', letterSpacing: 1 },
+  hudText: { color: '#fff', fontSize: 14, fontFamily: 'Poppins-Black', letterSpacing: 1 },
   hudExit: { paddingHorizontal: 10, paddingVertical: 5, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 8 },
   hudExitText: { color: 'rgba(255,255,255,0.5)', fontSize: 11, fontFamily: 'Poppins-Regular', letterSpacing: 1 },
 
   // Overlays
   overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 40 },
-  title: { color: '#fff', fontSize: 48, fontFamily: 'TenorSans_400Regular', textAlign: 'center', letterSpacing: 4, marginBottom: 16 },
+  title: { color: '#fff', fontSize: 48, fontFamily: 'Poppins-Black', textAlign: 'center', letterSpacing: 4, marginBottom: 16 },
   subtitle: { color: 'rgba(255,255,255,0.5)', fontSize: 14, fontFamily: 'Poppins-Light', textAlign: 'center', marginBottom: 20 },
   menuShip: { width: SHIP_W, height: SHIP_H, marginBottom: 32, transform: [{ scale: 3 }] },
   menuDivider: { width: 40, height: 1, backgroundColor: 'rgba(255,255,255,0.15)', marginVertical: 20 },
   menuHint: { color: 'rgba(255,255,255,0.25)', fontSize: 11, fontFamily: 'Poppins-Light', marginTop: 32, letterSpacing: 1 },
-  levelClearText: { color: 'rgba(255,255,255,0.4)', fontSize: 14, fontFamily: 'Poppins-Bold', letterSpacing: 3, marginBottom: 4 },
+  levelClearText: { color: 'rgba(255,255,255,0.4)', fontSize: 14, fontFamily: 'Poppins-Black', letterSpacing: 3, marginBottom: 4 },
   btn: { backgroundColor: '#d4c5a0', paddingVertical: 16, paddingHorizontal: 40, borderRadius: 12, marginBottom: 16 },
-  btnText: { color: '#000', fontSize: 16, fontFamily: 'Poppins-Bold', letterSpacing: 2 },
+  btnText: { color: '#000', fontSize: 16, fontFamily: 'Poppins-Black', letterSpacing: 2 },
   highScore: { color: '#d4c5a0', fontSize: 13, fontFamily: 'Poppins-Regular', marginTop: 12 },
   scoreText: { color: 'rgba(255,255,255,0.35)', fontSize: 12, fontFamily: 'Poppins-Regular', marginBottom: 20, letterSpacing: 1 },
   closeBtn: { marginTop: 16, paddingVertical: 12, paddingHorizontal: 24, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', borderRadius: 10 },

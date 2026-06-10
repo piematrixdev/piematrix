@@ -1,537 +1,345 @@
 /**
- * ProfileScreen — User profile, settings, and account management.
- * Polished UI with gradient header, stats, and smooth interactions.
+ * ProfileScreen — Clean user profile with account info, preferences, and actions.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  StatusBar, Alert, TextInput, Image, Animated, Easing,
+  StatusBar, Alert, TextInput, RefreshControl,
 } from 'react-native';
+import { Image, prefetch } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import {
-  ArrowLeft2, User, Logout, Edit2, Moon, Sun1,
-  Location, Notification, Shield, InfoCircle, Camera,
-  Star1, Calendar, Radar,
+  ArrowLeft2, User, Logout, Edit2,
+  Notification, Shield, Camera, Star1,
 } from 'iconsax-react-native';
 import { useAuth } from './auth/AuthContext';
 import { supabase } from './auth/supabaseClient';
+import SkyIcon from './components/SkyIcon';
 
 const F_LIGHT = 'Poppins-Light';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
-const F_TITLE_SOFT = 'TenorSans_400Regular';
-
+const F_TITLE = 'Poppins-ExtraBold';
 const ACCENT = '#d4c5a0';
 const BG = '#030308';
 
-interface ProfileScreenProps {
-  onClose: () => void;
-}
+interface Props { onClose: () => void; }
 
-export default function ProfileScreen({ onClose }: ProfileScreenProps) {
+export default function ProfileScreen({ onClose }: Props) {
   const { user, signOut } = useAuth();
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(
-    user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? ''
-  );
+  const [name, setName] = useState(user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '');
+  const [phone, setPhone] = useState(user?.user_metadata?.phone ?? '');
   const [saving, setSaving] = useState(false);
-  const [profileAvatarUrl, setProfileAvatarUrl] = useState<string | null>(null);
-  const [emailNotifs, setEmailNotifs] = useState(false);
-  const [profileData, setProfileData] = useState<any>(null);
-
-  // Animations
-  const headerScale = useRef(new Animated.Value(0.95)).current;
-  const fadeIn = useRef(new Animated.Value(0)).current;
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [notifs, setNotifs] = useState(true); // ON by default
+  const [profile, setProfile] = useState<any>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const email = user?.email ?? '';
-  const avatarUrl = profileAvatarUrl ?? user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? null;
+  const displayAvatar = avatarUrl ?? user?.user_metadata?.avatar_url ?? null;
   const provider = user?.app_metadata?.provider ?? 'email';
-  const createdAt = user?.created_at ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : '';
+  const memberSince = user?.created_at
+    ? new Date(user.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+    : '';
   const memberDays = user?.created_at
     ? Math.floor((Date.now() - new Date(user.created_at).getTime()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  useEffect(() => {
-    Animated.parallel([
-      Animated.spring(headerScale, { toValue: 1, friction: 8, tension: 40, useNativeDriver: true }),
-      Animated.timing(fadeIn, { toValue: 1, duration: 400, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
-    ]).start();
-  }, []);
+  const fetchProfile = async () => {
+    if (!user?.id) return;
+    const { data: authData } = await supabase.auth.getUser();
+    const userId = authData?.user?.id ?? user.id;
+    if (authData?.user?.user_metadata) {
+      const meta = authData.user.user_metadata;
+      if (meta.full_name) setName(meta.full_name);
+      else if (meta.name) setName(meta.name);
+      if (meta.phone) setPhone(meta.phone);
+    }
+    // Fetch profile row for avatar, interests, etc.
+    const { data } = await supabase.from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+    if (data) {
+      setProfile(data);
+      if (data.avatar_url) { setAvatarUrl(data.avatar_url); prefetch(data.avatar_url); }
+      // Respect DB value: if explicitly false, turn off. If null/true, keep on.
+      setNotifs(data.email_notifications !== false);
+    }
+  };
 
-  // Fetch profile data
-  useEffect(() => {
-    (async () => {
-      try {
-        const { data } = await supabase
-          .from('user_profiles')
-          .select('avatar_url, email_notifications, experience_level, interests, gear, custom_gear, bortle_default')
-          .eq('id', user?.id)
-          .single();
-        if (data) {
-          setProfileData(data);
-          if (data.avatar_url) setProfileAvatarUrl(data.avatar_url);
-          if (data.email_notifications) setEmailNotifs(true);
-        }
-      } catch {}
-    })();
-  }, [user?.id]);
+  useEffect(() => { fetchProfile(); }, [user?.id]);
 
-  const handleChangePhoto = async () => {
+  // Auto-open edit mode if phone is missing
+  useEffect(() => {
+    if (profile && !phone) setEditing(true);
+  }, [profile]);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchProfile();
+    setRefreshing(false);
+  };
+
+  const pickPhoto = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.7,
+      mediaTypes: ['images'], allowsEditing: true, aspect: [1, 1], quality: 0.7,
     });
     if (result.canceled || !result.assets[0] || !user) return;
-
     const uri = result.assets[0].uri;
     try {
       const ext = uri.split('.').pop()?.split('?')[0] ?? 'jpg';
       const fileName = `${user.id}/avatar.${ext}`;
       const response = await fetch(uri);
-      const arrayBuffer = await response.arrayBuffer();
-      const uint8 = new Uint8Array(arrayBuffer);
-      const { error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(fileName, uint8, { upsert: true, contentType: `image/${ext === 'png' ? 'png' : 'jpeg'}` });
-
-      if (uploadError) throw uploadError;
-
-      const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(fileName);
-      const newUrl = urlData.publicUrl + '?t=' + Date.now();
-
-      await supabase.from('user_profiles').upsert({
-        id: user.id,
-        avatar_url: newUrl,
-      });
-
-      setProfileAvatarUrl(newUrl);
-      Alert.alert('Updated', 'Profile photo changed.');
+      const buf = new Uint8Array(await response.arrayBuffer());
+      await supabase.storage.from('avatars').upload(fileName, buf, { upsert: true, contentType: `image/${ext === 'png' ? 'png' : 'jpeg'}` });
+      const { data } = supabase.storage.from('avatars').getPublicUrl(fileName);
+      const url = data.publicUrl + '?t=' + Date.now();
+      await supabase.from('user_profiles').upsert({ id: user.id, avatar_url: url });
+      setAvatarUrl(url);
     } catch (e: any) {
       Alert.alert('Error', e.message ?? 'Failed to upload photo.');
     }
   };
 
-  const handleSaveName = async () => {
+  const saveName = async () => {
     if (!name.trim()) return;
+    if (!phone.trim()) { Alert.alert('Required', 'Please enter your phone number.'); return; }
     setSaving(true);
-    const { error } = await supabase.auth.updateUser({
-      data: { full_name: name.trim() },
-    });
-    setSaving(false);
-    if (error) {
-      Alert.alert('Error', error.message);
-    } else {
+    try {
+      await supabase.auth.updateUser({ data: { full_name: name.trim(), phone: phone.trim() } });
       setEditing(false);
-      Alert.alert('Updated', 'Your name has been updated.');
-    }
+      await fetchProfile();
+    } catch (e: any) {
+      Alert.alert('Error', e.message ?? 'Failed to update.');
+    } finally { setSaving(false); }
   };
 
-  const toggleEmailNotifications = async () => {
-    const newVal = !emailNotifs;
-    setEmailNotifs(newVal);
-    await supabase.from('user_profiles').upsert({
-      id: user?.id,
-      email_notifications: newVal,
-    });
-    // Also toggle the daily push notification
-    if (newVal) {
-      const { scheduleDailySkyNotification } = require('./notifications/PushNotificationService');
-      scheduleDailySkyNotification(19, 0);
-    } else {
-      const { cancelAllNotifications } = require('./notifications/PushNotificationService');
-      cancelAllNotifications();
-    }
+  const toggleNotifs = async () => {
+    const val = !notifs;
+    setNotifs(val);
+    // Save preference to DB
+    await supabase.from('user_profiles').update({ email_notifications: val }).eq('id', user?.id);
+    // Schedule or cancel push notifications
+    try {
+      if (val) {
+        const { scheduleDailySkyNotification } = require('./notifications/PushNotificationService');
+        await scheduleDailySkyNotification(19, 0);
+      } else {
+        const { cancelAllNotifications } = require('./notifications/PushNotificationService');
+        await cancelAllNotifications();
+      }
+    } catch {}
   };
 
-  const handleLogout = () => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+  const logout = () => {
+    Alert.alert('Sign Out', 'Are you sure?', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: signOut },
     ]);
   };
 
-  const handleDeleteAccount = () => {
-    Alert.alert(
-      'Delete Account',
-      'This will permanently delete your account and all data. This cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            Alert.alert('Contact Support', 'Please email support@thepiematrix.com to delete your account.');
-          },
-        },
-      ]
-    );
-  };
-
-  const experienceLabel = profileData?.experience_level
-    ? profileData.experience_level.charAt(0).toUpperCase() + profileData.experience_level.slice(1)
-    : 'Not set';
-
-  const interestsCount = profileData?.interests?.length ?? 0;
-  const gearCount = (profileData?.gear?.length ?? 0) + (profileData?.custom_gear?.length ?? 0);
+  const experience = profile?.experience_level
+    ? profile.experience_level.charAt(0).toUpperCase() + profile.experience_level.slice(1)
+    : 'Stargazer';
 
   return (
     <View style={s.root}>
       <StatusBar barStyle="light-content" />
+      <ScrollView
+        contentContainerStyle={s.scroll}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#d4c5a0" />}
+      >
 
-      <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
-        {/* Hero header with gradient */}
-        <Animated.View style={[s.heroHeader, { transform: [{ scale: headerScale }] }]}>
-          <LinearGradient
-            colors={['rgba(212,197,160,0.15)', 'rgba(212,197,160,0.05)', 'transparent']}
-            style={s.heroGradient}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-          />
+        {/* Header */}
+        <LinearGradient colors={['rgba(212,197,160,0.12)', 'transparent']} style={s.headerGrad} />
+        <View style={s.nav}>
+          <TouchableOpacity onPress={onClose} style={s.backBtn}>
+            <ArrowLeft2 size={20} color="#fff" variant="Linear" />
+          </TouchableOpacity>
+          <Text style={s.navTitle}>Profile</Text>
+          <View style={{ width: 40 }} />
+        </View>
 
-          {/* Navigation bar */}
-          <View style={s.navBar}>
-            <TouchableOpacity onPress={onClose} style={s.backBtn} activeOpacity={0.7}>
-              <ArrowLeft2 size={20} color="#fff" variant="Linear" />
-            </TouchableOpacity>
-            <Text style={s.navTitle}>Profile</Text>
-            <View style={{ width: 40 }} />
-          </View>
-
-          {/* Avatar + Name */}
-          <View style={s.profileHero}>
-            <TouchableOpacity style={s.avatarContainer} onPress={handleChangePhoto} activeOpacity={0.8}>
-              <View style={s.avatarRing}>
-                {avatarUrl ? (
-                  <Image source={{ uri: avatarUrl }} style={s.avatar} />
-                ) : (
-                  <View style={s.avatarPlaceholder}>
-                    <User size={36} color="rgba(255,255,255,0.4)" variant="Bold" />
-                  </View>
-                )}
+        {/* Avatar + Info */}
+        <View style={s.profileSection}>
+          <TouchableOpacity onPress={pickPhoto} activeOpacity={0.8} style={s.avatarWrap}>
+            {displayAvatar ? (
+              <Image source={{ uri: displayAvatar }} style={s.avatar} cachePolicy="disk" />
+            ) : (
+              <View style={s.avatarEmpty}>
+                <User size={36} color="rgba(255,255,255,0.3)" variant="Bold" />
               </View>
-              <View style={s.cameraBadge}>
-                <Camera size={13} color={BG} variant="Bold" />
-              </View>
-            </TouchableOpacity>
+            )}
+            <View style={s.cameraBadge}>
+              <Camera size={12} color={BG} variant="Bold" />
+            </View>
+          </TouchableOpacity>
 
-            {editing ? (
-              <View style={s.editNameRow}>
-                <TextInput
-                  style={s.nameInput}
-                  value={name}
-                  onChangeText={setName}
-                  placeholder="Your name"
-                  placeholderTextColor="rgba(255,255,255,0.3)"
-                  autoFocus
-                  returnKeyType="done"
-                  onSubmitEditing={handleSaveName}
-                />
-                <TouchableOpacity style={s.saveBtn} onPress={handleSaveName} disabled={saving}>
+          {editing ? (
+            <View style={s.editBlock}>
+              <TextInput style={s.input} value={name} onChangeText={setName} placeholder="Name" placeholderTextColor="rgba(255,255,255,0.3)" autoFocus />
+              <TextInput style={s.input} value={phone} onChangeText={setPhone} placeholder="Phone" placeholderTextColor="rgba(255,255,255,0.3)" keyboardType="phone-pad" />
+              <View style={s.editBtns}>
+                <TouchableOpacity style={s.saveBtn} onPress={saveName} disabled={saving}>
                   <Text style={s.saveBtnText}>{saving ? '...' : 'Save'}</Text>
                 </TouchableOpacity>
-                <TouchableOpacity onPress={() => setEditing(false)} style={s.cancelBtn}>
-                  <Text style={s.cancelBtnText}>Cancel</Text>
+                <TouchableOpacity onPress={() => setEditing(false)}>
+                  <Text style={s.cancelText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
-            ) : (
-              <TouchableOpacity style={s.nameRow} onPress={() => setEditing(true)} activeOpacity={0.7}>
-                <Text style={s.userName}>{name || 'Set your name'}</Text>
-                <Edit2 size={14} color="rgba(255,255,255,0.25)" variant="Linear" />
-              </TouchableOpacity>
-            )}
+            </View>
+          ) : (
+            <TouchableOpacity onPress={() => setEditing(true)} style={s.nameRow}>
+              <Text style={s.name}>{name || 'Set your name'}</Text>
+              <Edit2 size={14} color="rgba(255,255,255,0.2)" variant="Linear" />
+            </TouchableOpacity>
+          )}
 
-            <Text style={s.userEmail}>{email}</Text>
+          <Text style={s.email}>{email}</Text>
+          {phone ? <Text style={s.phone}>{phone}</Text> : null}
 
-            {/* Provider + Level badges */}
-            <View style={s.badgeRow}>
-              <View style={s.badge}>
-                <Shield size={12} color={ACCENT} variant="Bold" />
-                <Text style={s.badgeText}>{provider}</Text>
-              </View>
-              <View style={s.badge}>
-                <Star1 size={12} color={ACCENT} variant="Bold" />
-                <Text style={s.badgeText}>{experienceLabel}</Text>
-              </View>
+          <View style={s.badges}>
+            <View style={s.badge}>
+              <Shield size={12} color={ACCENT} variant="Bold" />
+              <Text style={s.badgeText}>{provider}</Text>
+            </View>
+            <View style={s.badge}>
+              <Star1 size={12} color={ACCENT} variant="Bold" />
+              <Text style={s.badgeText}>{experience}</Text>
             </View>
           </View>
-        </Animated.View>
+        </View>
 
-        {/* Stats row */}
-        <Animated.View style={[s.statsRow, { opacity: fadeIn }]}>
-          <View style={s.statItem}>
-            <Text style={s.statValue}>{memberDays}</Text>
-            <Text style={s.statLabel}>Days</Text>
+        {/* Stats */}
+        <View style={s.stats}>
+          <View style={s.stat}>
+            <Text style={s.statVal}>{memberDays}</Text>
+            <Text style={s.statLbl}>Days</Text>
           </View>
-          <View style={s.statDivider} />
-          <View style={s.statItem}>
-            <Text style={s.statValue}>{interestsCount}</Text>
-            <Text style={s.statLabel}>Interests</Text>
+          <View style={s.statDiv} />
+          <View style={s.stat}>
+            <Text style={s.statVal}>{profile?.interests?.length ?? 0}</Text>
+            <Text style={s.statLbl}>Interests</Text>
           </View>
-          <View style={s.statDivider} />
-          <View style={s.statItem}>
-            <Text style={s.statValue}>{gearCount}</Text>
-            <Text style={s.statLabel}>Gear</Text>
+          <View style={s.statDiv} />
+          <View style={s.stat}>
+            <Text style={s.statVal}>{profile?.bortle_default ?? 5}</Text>
+            <Text style={s.statLbl}>Bortle</Text>
           </View>
-          <View style={s.statDivider} />
-          <View style={s.statItem}>
-            <Text style={s.statValue}>{profileData?.bortle_default ?? 5}</Text>
-            <Text style={s.statLabel}>Bortle</Text>
-          </View>
-        </Animated.View>
+        </View>
 
-        {/* Interests chips */}
-        {profileData?.interests && profileData.interests.length > 0 && (
-          <Animated.View style={[s.section, { opacity: fadeIn }]}>
+        {/* Interests */}
+        {profile?.interests?.length > 0 && (
+          <View style={s.section}>
             <Text style={s.sectionLabel}>INTERESTS</Text>
-            <View style={s.chipsWrap}>
-              {profileData.interests.map((interest: string) => (
-                <View key={interest} style={s.chip}>
-                  <Text style={s.chipText}>
-                    {interest.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
-                  </Text>
+            <View style={s.chips}>
+              {profile.interests.map((i: string) => (
+                <View key={i} style={s.chip}>
+                  <Text style={s.chipText}>{i.replace(/_/g, ' ')}</Text>
                 </View>
               ))}
             </View>
-          </Animated.View>
+          </View>
         )}
 
-        {/* Preferences */}
-        <Animated.View style={[s.section, { opacity: fadeIn }]}>
-          <Text style={s.sectionLabel}>PREFERENCES</Text>
-          <View style={s.card}>
-            <SettingRow
-              icon={<Moon size={20} color="#a78bfa" variant="Bulk" />}
-              label="Theme"
-              value="Dark"
-            />
-            <SettingRow
-              icon={<Location size={20} color="#60a5fa" variant="Bulk" />}
-              label="Location"
-              value="Auto-detect"
-            />
-            <SettingRow
-              icon={<Radar size={20} color={ACCENT} variant="Bulk" />}
-              label="Bortle zone"
-              value={`Class ${profileData?.bortle_default ?? 5}`}
-            />
-          </View>
-        </Animated.View>
-
         {/* Notifications */}
-        <Animated.View style={[s.section, { opacity: fadeIn }]}>
+        <View style={s.section}>
           <Text style={s.sectionLabel}>NOTIFICATIONS</Text>
-          <View style={s.card}>
-            <TouchableOpacity style={s.toggleRow} onPress={toggleEmailNotifications} activeOpacity={0.7}>
-              <View style={s.toggleLeft}>
-                <Notification size={20} color={emailNotifs ? ACCENT : 'rgba(255,255,255,0.4)'} variant="Bulk" />
-                <View>
-                  <Text style={s.settingLabel}>Nightly Sky Alert</Text>
-                  <Text style={s.settingHint}>Daily notification at sunset with tonight's highlights</Text>
-                </View>
+          <TouchableOpacity style={s.card} onPress={toggleNotifs} activeOpacity={0.7}>
+            <View style={s.cardRow}>
+              <SkyIcon name="satellite" size={20} color={notifs ? ACCENT : 'rgba(255,255,255,0.3)'} />
+              <View style={{ flex: 1 }}>
+                <Text style={s.cardTitle}>Nightly Sky Alert</Text>
+                <Text style={s.cardHint}>Get notified at sunset with tonight's highlights</Text>
               </View>
-              <View style={[s.toggle, emailNotifs && s.toggleOn]}>
-                <Animated.View style={[s.toggleDot, emailNotifs && s.toggleDotOn]} />
+              <View style={[s.toggle, notifs && s.toggleOn]}>
+                <View style={[s.dot, notifs && s.dotOn]} />
               </View>
-            </TouchableOpacity>
-          </View>
-        </Animated.View>
-
-        {/* About */}
-        <Animated.View style={[s.section, { opacity: fadeIn }]}>
-          <Text style={s.sectionLabel}>ABOUT</Text>
-          <View style={s.card}>
-            <SettingRow
-              icon={<InfoCircle size={20} color="rgba(255,255,255,0.4)" variant="Bulk" />}
-              label="Version"
-              value="Beta v1.2"
-            />
-            <SettingRow
-              icon={<Calendar size={20} color="rgba(255,255,255,0.4)" variant="Bulk" />}
-              label="Member since"
-              value={createdAt}
-            />
-            <SettingRow
-              icon={<Sun1 size={20} color="rgba(255,255,255,0.4)" variant="Bulk" />}
-              label="Made by"
-              value="Pie Matrix"
-            />
-          </View>
-        </Animated.View>
-
-        {/* Actions */}
-        <View style={s.actionsSection}>
-          <TouchableOpacity style={s.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
-            <Logout size={18} color="#ef4444" variant="Linear" />
-            <Text style={s.logoutText}>Sign Out</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity style={s.deleteBtn} onPress={handleDeleteAccount} activeOpacity={0.6}>
-            <Text style={s.deleteText}>Delete Account</Text>
+            </View>
           </TouchableOpacity>
         </View>
 
-        <View style={{ height: 50 }} />
-      </ScrollView>
-    </View>
-  );
-}
+        {/* About */}
+        <View style={s.section}>
+          <Text style={s.sectionLabel}>ABOUT</Text>
+          <View style={s.card}>
+            <View style={s.infoRow}><Text style={s.infoLabel}>Member since</Text><Text style={s.infoVal}>{memberSince}</Text></View>
+            <View style={s.infoRow}><Text style={s.infoLabel}>Version</Text><Text style={s.infoVal}>Beta v1.2</Text></View>
+            <View style={[s.infoRow, { borderBottomWidth: 0 }]}><Text style={s.infoLabel}>Made by</Text><Text style={s.infoVal}>Pie Matrix</Text></View>
+          </View>
+        </View>
 
-function SettingRow({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <View style={s.settingRow}>
-      <View style={s.settingRowLeft}>
-        {icon}
-        <Text style={s.settingLabel}>{label}</Text>
-      </View>
-      <Text style={s.settingValue}>{value}</Text>
+        {/* Sign out */}
+        <TouchableOpacity style={s.logoutBtn} onPress={logout} activeOpacity={0.8}>
+          <Logout size={18} color="#ef4444" variant="Linear" />
+          <Text style={s.logoutText}>Sign Out</Text>
+        </TouchableOpacity>
+
+        <View style={{ height: 140 }} />
+      </ScrollView>
     </View>
   );
 }
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG },
-  scroll: { paddingBottom: 40 },
+  scroll: {},
+  headerGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 200 },
+  nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 58, paddingHorizontal: 20, paddingBottom: 8 },
+  backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' },
+  navTitle: { color: '#fff', fontSize: 16, fontFamily: F_BOLD },
 
-  // Hero header
-  heroHeader: {
-    paddingBottom: 24,
-    borderBottomLeftRadius: 32,
-    borderBottomRightRadius: 32,
-    overflow: 'hidden',
-  },
-  heroGradient: {
-    ...StyleSheet.absoluteFillObject,
-  },
-  navBar: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingTop: 58, paddingHorizontal: 20, paddingBottom: 8,
-  },
-  backBtn: {
-    width: 40, height: 40, borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  navTitle: { color: '#fff', fontSize: 16, fontFamily: F_TITLE_SOFT, letterSpacing: 0.3 },
+  profileSection: { alignItems: 'center', paddingTop: 16, paddingBottom: 20 },
+  avatarWrap: { marginBottom: 14 },
+  avatar: { width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: 'rgba(212,197,160,0.4)' },
+  avatarEmpty: { width: 90, height: 90, borderRadius: 45, backgroundColor: 'rgba(255,255,255,0.04)', borderWidth: 3, borderColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', alignItems: 'center' },
+  cameraBadge: { position: 'absolute', bottom: 0, right: 0, width: 28, height: 28, borderRadius: 14, backgroundColor: ACCENT, justifyContent: 'center', alignItems: 'center', borderWidth: 3, borderColor: BG },
 
-  // Profile hero
-  profileHero: { alignItems: 'center', paddingTop: 12, paddingBottom: 8 },
-  avatarContainer: { marginBottom: 16, position: 'relative' },
-  avatarRing: {
-    width: 96, height: 96, borderRadius: 48,
-    borderWidth: 2.5, borderColor: 'rgba(212,197,160,0.4)',
-    padding: 3,
-  },
-  avatar: { width: '100%', height: '100%', borderRadius: 44 },
-  avatarPlaceholder: {
-    width: '100%', height: '100%', borderRadius: 44,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    justifyContent: 'center', alignItems: 'center',
-  },
-  cameraBadge: {
-    position: 'absolute', bottom: 2, right: 2,
-    width: 28, height: 28, borderRadius: 14,
-    backgroundColor: ACCENT, justifyContent: 'center', alignItems: 'center',
-    borderWidth: 3, borderColor: BG,
-  },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  userName: { color: '#fff', fontSize: 24, fontFamily: F_TITLE, letterSpacing: -0.3 },
-  userEmail: { color: 'rgba(255,255,255,0.35)', fontSize: 13, fontFamily: F_LIGHT, marginTop: 4 },
-
-  // Badges
-  badgeRow: { flexDirection: 'row', gap: 10, marginTop: 14 },
-  badge: {
-    flexDirection: 'row', alignItems: 'center', gap: 5,
-    paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10,
-    backgroundColor: 'rgba(212,197,160,0.08)',
-    borderWidth: 1, borderColor: 'rgba(212,197,160,0.15)',
-  },
+  name: { color: '#fff', fontSize: 22, fontFamily: F_TITLE },
+  email: { color: 'rgba(255,255,255,0.35)', fontSize: 13, fontFamily: F_LIGHT, marginTop: 4 },
+  phone: { color: 'rgba(255,255,255,0.3)', fontSize: 12, fontFamily: F_LIGHT, marginTop: 3 },
+  badges: { flexDirection: 'row', gap: 8, marginTop: 12 },
+  badge: { flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 10, backgroundColor: 'rgba(212,197,160,0.08)', borderWidth: 1, borderColor: 'rgba(212,197,160,0.15)' },
   badgeText: { color: 'rgba(255,255,255,0.6)', fontSize: 11, fontFamily: F_REG, textTransform: 'capitalize' },
 
-  // Edit name
-  editNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 24, flexWrap: 'wrap', justifyContent: 'center' },
-  nameInput: {
-    flex: 1, minWidth: 160, backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12,
-    paddingHorizontal: 14, paddingVertical: 11, color: '#fff', fontSize: 15, fontFamily: F_REG,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
-  },
-  saveBtn: { backgroundColor: ACCENT, paddingHorizontal: 16, paddingVertical: 11, borderRadius: 10 },
+  editBlock: { width: '100%', paddingHorizontal: 24, gap: 8 },
+  input: { backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 11, color: '#fff', fontSize: 15, fontFamily: F_REG, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
+  editBtns: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginTop: 6 },
+  saveBtn: { backgroundColor: ACCENT, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 10 },
   saveBtnText: { color: BG, fontSize: 13, fontFamily: F_BOLD },
-  cancelBtn: { paddingHorizontal: 12, paddingVertical: 11 },
-  cancelBtnText: { color: 'rgba(255,255,255,0.4)', fontSize: 13, fontFamily: F_REG },
+  cancelText: { color: 'rgba(255,255,255,0.4)', fontSize: 13, fontFamily: F_REG, paddingVertical: 10 },
 
-  // Stats
-  statsRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-evenly',
-    marginHorizontal: 20, marginTop: 20, marginBottom: 8,
-    paddingVertical: 18, paddingHorizontal: 12,
-    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 20,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
-  },
-  statItem: { alignItems: 'center', flex: 1 },
-  statValue: { color: '#fff', fontSize: 20, fontFamily: F_BOLD },
-  statLabel: { color: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: F_LIGHT, marginTop: 3, letterSpacing: 0.5 },
-  statDivider: { width: 1, height: 28, backgroundColor: 'rgba(255,255,255,0.06)' },
+  stats: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-evenly', marginHorizontal: 20, paddingVertical: 18, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 18, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)' },
+  stat: { alignItems: 'center', flex: 1 },
+  statVal: { color: '#fff', fontSize: 20, fontFamily: F_BOLD },
+  statLbl: { color: 'rgba(255,255,255,0.35)', fontSize: 10, fontFamily: F_LIGHT, marginTop: 3 },
+  statDiv: { width: 1, height: 28, backgroundColor: 'rgba(255,255,255,0.06)' },
 
-  // Interests chips
-  chipsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 20 },
-  chip: {
-    paddingHorizontal: 12, paddingVertical: 7, borderRadius: 14,
-    backgroundColor: 'rgba(212,197,160,0.08)',
-    borderWidth: 1, borderColor: 'rgba(212,197,160,0.15)',
-  },
-  chipText: { color: 'rgba(255,255,255,0.7)', fontSize: 12, fontFamily: F_REG },
-
-  // Sections
   section: { marginHorizontal: 20, marginTop: 24 },
-  sectionLabel: {
-    color: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: F_BOLD,
-    letterSpacing: 1.5, marginBottom: 10, marginLeft: 4,
-  },
-  card: {
-    backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 18,
-    borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)',
-    overflow: 'hidden',
-  },
+  sectionLabel: { color: 'rgba(255,255,255,0.3)', fontSize: 10, fontFamily: F_BOLD, letterSpacing: 1.5, marginBottom: 10, marginLeft: 4 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: 12, backgroundColor: 'rgba(212,197,160,0.08)', borderWidth: 1, borderColor: 'rgba(212,197,160,0.15)' },
+  chipText: { color: 'rgba(255,255,255,0.6)', fontSize: 12, fontFamily: F_REG, textTransform: 'capitalize' },
 
-  // Setting rows
-  settingRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingVertical: 15, paddingHorizontal: 16,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)',
-  },
-  settingRowLeft: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  settingLabel: { color: 'rgba(255,255,255,0.75)', fontSize: 14, fontFamily: F_REG },
-  settingValue: { color: 'rgba(255,255,255,0.35)', fontSize: 13, fontFamily: F_LIGHT },
-  settingHint: { color: 'rgba(255,255,255,0.3)', fontSize: 11, fontFamily: F_LIGHT, marginTop: 2 },
+  card: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.05)', overflow: 'hidden' },
+  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16 },
+  cardTitle: { color: 'rgba(255,255,255,0.8)', fontSize: 14, fontFamily: F_REG },
+  cardHint: { color: 'rgba(255,255,255,0.3)', fontSize: 11, fontFamily: F_LIGHT, marginTop: 2 },
+  infoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.03)' },
+  infoLabel: { color: 'rgba(255,255,255,0.45)', fontSize: 13, fontFamily: F_LIGHT },
+  infoVal: { color: 'rgba(255,255,255,0.7)', fontSize: 13, fontFamily: F_REG },
 
-  // Toggle row
-  toggleRow: {
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
-    paddingVertical: 15, paddingHorizontal: 16,
-  },
-  toggleLeft: { flexDirection: 'row', alignItems: 'center', gap: 12, flex: 1 },
-  toggle: {
-    width: 46, height: 26, borderRadius: 13,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center', paddingHorizontal: 3,
-  },
+  toggle: { width: 44, height: 24, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.1)', justifyContent: 'center', paddingHorizontal: 3 },
   toggleOn: { backgroundColor: 'rgba(212,197,160,0.35)' },
-  toggleDot: { width: 20, height: 20, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.35)' },
-  toggleDotOn: { backgroundColor: ACCENT, alignSelf: 'flex-end' },
+  dot: { width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.35)' },
+  dotOn: { backgroundColor: ACCENT, alignSelf: 'flex-end' },
 
-  // Actions
-  actionsSection: { marginTop: 32, paddingHorizontal: 20 },
-  logoutBtn: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
-    paddingVertical: 16, borderRadius: 16,
-    backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)',
-  },
+  logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginHorizontal: 20, marginTop: 32, paddingVertical: 16, borderRadius: 16, backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)' },
   logoutText: { color: '#ef4444', fontSize: 15, fontFamily: F_BOLD },
-  deleteBtn: { alignItems: 'center', marginTop: 20, paddingVertical: 8 },
-  deleteText: { color: 'rgba(255,255,255,0.18)', fontSize: 12, fontFamily: F_LIGHT },
 });

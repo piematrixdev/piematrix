@@ -62,3 +62,40 @@ Archive.zip
 *.ipa
 *.aab
 *.apk
+
+# ── Expo ──────────────────────────────────────────────
+.expo/
+.expo-shared/
+web-build/
+expo-env.d.ts
+# Metro
+.metro-health-check*
+*.jsbundle
+
+# ── Xcode / CocoaPods (any depth) ─────────────────────
+# The native ios/ project, Podfile and Podfile.lock ARE committed so
+# Xcode Cloud can build. Pods/ is regenerated in CI (ci_post_clone.sh),
+# so it stays ignored. Never commit user/build state or DerivedData.
+**/Pods/
+**/DerivedData/
+**/xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+.xcode.env.local
+# Codegen / build output produced by prebuild & pod install
+apps/mobile/ios/build/
+
+# ── Android (any depth) ───────────────────────────────
+**/.gradle/
+**/.cxx/
+local.properties
+*.hprof
+
+# ── CI / Fastlane (keep ci_scripts/ committed!) ───────
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# ── Misc ──────────────────────────────────────────────
+*.orig

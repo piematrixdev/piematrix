@@ -50,6 +50,10 @@ export interface SkyEngineRefs {
   lst: React.MutableRefObject<number>;
   deepSky: React.MutableRefObject<Map<string, DeepSkyPosition>>;
   satellites: React.MutableRefObject<Map<string, SatellitePosition | SatelliteTrackerError>>;
+  /** Next-second prediction for satellites — used by the renderer for smooth interpolation. */
+  satellitesNext: React.MutableRefObject<Map<string, SatellitePosition | SatelliteTrackerError>>;
+  /** Timestamps {prev, next} for the satellite snapshots, for interpolation. */
+  satellitesTime: React.MutableRefObject<{ prev: number; next: number }>;
   meteors: React.MutableRefObject<Map<string, MeteorShowerPosition>>;
   calc: React.MutableRefObject<any>;
 }
@@ -92,6 +96,8 @@ export function useSkyEngine(bortle: number) {
   const lstRef = useRef(0);
   const deepSkyRef = useRef<Map<string, DeepSkyPosition>>(new Map());
   const satRef = useRef<Map<string, SatellitePosition | SatelliteTrackerError>>(new Map());
+  const satNextRef = useRef<Map<string, SatellitePosition | SatelliteTrackerError>>(new Map());
+  const satTimeRef = useRef<{ prev: number; next: number }>({ prev: 0, next: 0 });
   const meteorRef = useRef<Map<string, MeteorShowerPosition>>(new Map());
   const calcRef = useRef<any>(null);
   const satTrackerRef = useRef<any>(null);
@@ -126,7 +132,36 @@ export function useSkyEngine(bortle: number) {
         const sat = createSatelliteTracker();
         await sat.loadDefaultISS();
 
-        // Load real-time satellite TLEs from CelesTrak (non-blocking)
+        /**
+         * Compute satellite positions for two consecutive moments — "now"
+         * and "now + 1s" — and store them in satRef / satNextRef. The
+         * renderer interpolates between these snapshots every frame to
+         * produce smooth motion without recomputing SGP4 at 60Hz.
+         */
+        const SAT_TICK_MS = 1000;
+        const updateSatelliteSnapshots = () => {
+          const tracker = satTrackerRef.current;
+          const sunPos = sunRef.current;
+          if (!tracker || !sunPos) return;
+          const tPrev = Date.now();
+          const tNext = tPrev + SAT_TICK_MS;
+          const prev = tracker.calculateAll(new Date(tPrev), coordsRef.current, sunPos);
+          const next = tracker.calculateAll(new Date(tNext), coordsRef.current, sunPos);
+          if (prev && prev.size > 0) {
+            // Mutate in place — see comment in onPositionsUpdate below.
+            satRef.current.clear();
+            for (const [k, v] of prev) satRef.current.set(k, v);
+          }
+          if (next && next.size > 0) {
+            satNextRef.current.clear();
+            for (const [k, v] of next) satNextRef.current.set(k, v);
+          }
+          satTimeRef.current = { prev: tPrev, next: tNext };
+        };
+
+        // Load real-time satellite TLEs from CelesTrak (non-blocking).
+        // As soon as TLEs arrive, compute positions immediately so satellites
+        // appear without waiting for the next 1s satInterval tick.
         fetchSatelliteTLEs().then((tles) => {
           for (const tle of tles) {
             sat.setTLE(tle.name, {
@@ -135,6 +170,11 @@ export function useSkyEngine(bortle: number) {
               line2: tle.line2,
               fetchedAt: new Date(),
             });
+          }
+          // Eager first computation — runs the moment TLEs are loaded
+          // (provided sun position is also ready).
+          if (!disposed && sunRef.current) {
+            updateSatelliteSnapshots();
           }
         }).catch(() => {});
 
@@ -160,7 +200,11 @@ export function useSkyEngine(bortle: number) {
               constLabelsRef.current = getConstellationLabels(coordsRef.current, pos.lst);
             }
             if (pos.deepSkyPositions) deepSkyRef.current = pos.deepSkyPositions;
-            if (pos.satellitePositions) satRef.current = pos.satellitePositions;
+            // Note: we deliberately ignore pos.satellitePositions here — the
+            // satInterval below is the single source of truth for satellites
+            // and feeds both satRef (now) and satNextRef (now + 1s) for the
+            // renderer's per-frame interpolation. Letting the calc also write
+            // to satRef would desync the prev/next pair.
             if (pos.meteorShowerRadiants) meteorRef.current = pos.meteorShowerRadiants;
             const now = Date.now();
             // Always emit immediately for time-travel; throttle only in real-time
@@ -177,27 +221,17 @@ export function useSkyEngine(bortle: number) {
         calcRef.current = calc;
         satTrackerRef.current = sat;
 
-        // Compute satellite positions every 1 second (they move fast)
+        // Compute satellite snapshot pair (now + now+1s) every 1 second.
+        // The renderer interpolates between them every frame for smooth motion.
         const satInterval = setInterval(() => {
           if (disposed || !satTrackerRef.current) return;
-          const sunPos = sunRef.current;
-          if (!sunPos) return;
-          const positions = satTrackerRef.current.calculateAll(
-            new Date(),
-            coordsRef.current,
-            sunPos
-          );
-          if (positions && positions.size > 0) {
-            satRef.current = positions;
-          }
+          updateSatelliteSnapshots();
         }, 1000);
-        // Also compute once immediately after TLEs load
+        // Backup compute in case TLE fetch took longer than 3s — won't
+        // duplicate work if the eager path already ran.
         setTimeout(() => {
-          if (disposed || !satTrackerRef.current || !sunRef.current) return;
-          const positions = satTrackerRef.current.calculateAll(new Date(), coordsRef.current, sunRef.current);
-          if (positions && positions.size > 0) {
-            satRef.current = positions;
-          }
+          if (disposed) return;
+          updateSatelliteSnapshots();
         }, 3000);
 
         const initLst = calculateLST(coords.longitude, new Date());
@@ -215,9 +249,9 @@ export function useSkyEngine(bortle: number) {
           const easterEggStar = {
             id: 'PIE-001',
             name: 'Raagavi Shrivastava',
-            ra: 14.42,  // RA in hours — near Boötes, a quiet corner
-            dec: 28.7,  // Dec in degrees
-            magnitude: -0.5,  // Bright enough to always be visible
+            ra: 15.1,   // RA in hours — a quiet corner of Libra
+            dec: -19.0, // Dec in degrees — inside Libra's boundary
+            magnitude: 3.8,  // Subtle — visible but blends in, not obvious
             spectralType: 'M',  // Warm golden color
           };
           stars = stars.filter(s => s.id !== 'PIE-001');
@@ -241,7 +275,7 @@ export function useSkyEngine(bortle: number) {
     loadStarsForMagnitude(limMag, (stars, phase) => {
       // Always keep the easter egg star
       stars = stars.filter(s => s.id !== 'PIE-001');
-      stars.push({ id: 'PIE-001', name: 'Raagavi Shrivastava', ra: 14.42, dec: 28.7, magnitude: -0.5, spectralType: 'M' } as any);
+      stars.push({ id: 'PIE-001', name: 'Raagavi Shrivastava', ra: 15.1, dec: -19.0, magnitude: 3.8, spectralType: 'M' } as any);
       starsRef.current = stars;
       sortedIdxRef.current = sortStarsByMagnitude(stars);
       calcRef.current?.setStars(stars);
@@ -302,7 +336,7 @@ export function useSkyEngine(bortle: number) {
     setLoadingStars(true);
     loadStarsForZoom(fov, (stars, phase) => {
       stars = stars.filter(s => s.id !== 'PIE-001');
-      stars.push({ id: 'PIE-001', name: 'Raagavi Shrivastava', ra: 14.42, dec: 28.7, magnitude: -0.5, spectralType: 'M' } as any);
+      stars.push({ id: 'PIE-001', name: 'Raagavi Shrivastava', ra: 15.1, dec: -19.0, magnitude: 3.8, spectralType: 'M' } as any);
       starsRef.current = stars;
       sortedIdxRef.current = sortStarsByMagnitude(stars);
       calcRef.current?.setStars(stars);
@@ -328,6 +362,8 @@ export function useSkyEngine(bortle: number) {
       lst: lstRef,
       deepSky: deepSkyRef,
       satellites: satRef,
+      satellitesNext: satNextRef,
+      satellitesTime: satTimeRef,
       meteors: meteorRef,
       calc: calcRef,
       displayTime: displayTimeRef,

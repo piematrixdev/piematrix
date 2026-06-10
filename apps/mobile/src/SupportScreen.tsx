@@ -10,9 +10,11 @@ import {
 import { ArrowLeft, MessageQuestion, Sms, Global, ArrowRight2 } from 'iconsax-react-native';
 
 const F_LIGHT = 'Poppins-Light';
+const F_MEDIUM = 'Poppins-Medium';
+const F_SEMIBOLD = 'Poppins-SemiBold';
 const F_REG = 'Poppins-Regular';
 const F_BOLD = 'Poppins-Bold';
-const F_TITLE = 'TenorSans_400Regular';
+const F_TITLE = 'Poppins-ExtraBold';
 
 interface SupportScreenProps { onClose: () => void }
 
