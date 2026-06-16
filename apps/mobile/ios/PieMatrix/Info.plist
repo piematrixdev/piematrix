@@ -59,6 +59,10 @@
     <string>Pie Matrix may use the microphone for voice input when providing feedback or support requests.</string>
     <key>NSMotionUsageDescription</key>
     <string>Pie Matrix uses motion sensors for AR sky navigation.</string>
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+    <key>NSUserTrackingUsageDescription</key>
+    <string>Pie Matrix uses this to provide a personalized experience and show relevant sky events. You can change this anytime in Settings.</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Pie Matrix uses your photo library to let you pick a profile picture that appears on your account and in the community.</string>
     <key>RCTNewArchEnabled</key>
