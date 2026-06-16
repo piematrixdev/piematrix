@@ -498,9 +498,6 @@ function PermissionsStep({ onNext }: { onNext: () => void }) {
         {!requesting && !done && <ArrowRight2 size={18} color="#030308" variant="Bold" />}
         {done && <TickCircle size={18} color="#030308" variant="Bold" />}
       </TouchableOpacity>
-      <TouchableOpacity onPress={onNext} disabled={requesting}>
-        <Text style={s.permSkip}>Maybe later</Text>
-      </TouchableOpacity>
     </View>
   );
 }

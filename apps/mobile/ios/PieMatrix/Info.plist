@@ -48,19 +48,19 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your camera</string>
+    <string>Pie Matrix uses the camera to let you take a profile photo directly from the app.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <string>Pie Matrix uses your location to calculate which stars, planets, and constellations are visible above you right now.</string>
     <key>NSLocationAlwaysUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your location</string>
+    <string>Pie Matrix uses your location to calculate which stars, planets, and constellations are visible above you right now.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
     <string>Pie Matrix needs your location to show the sky above you.</string>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your microphone</string>
+    <string>Pie Matrix may use the microphone for voice input when providing feedback or support requests.</string>
     <key>NSMotionUsageDescription</key>
     <string>Pie Matrix uses motion sensors for AR sky navigation.</string>
     <key>NSPhotoLibraryUsageDescription</key>
-    <string>Allow $(PRODUCT_NAME) to access your photos</string>
+    <string>Pie Matrix uses your photo library to let you pick a profile picture that appears on your account and in the community.</string>
     <key>RCTNewArchEnabled</key>
     <true/>
     <key>UIAppFonts</key>
