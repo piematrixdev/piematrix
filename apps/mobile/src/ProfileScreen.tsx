@@ -28,7 +28,7 @@ const BG = '#030308';
 interface Props { onClose: () => void; }
 
 export default function ProfileScreen({ onClose }: Props) {
-  const { user, signOut } = useAuth();
+  const { user, signOut, deleteAccount } = useAuth();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '');
   const [phone, setPhone] = useState(user?.user_metadata?.phone ?? '');
@@ -140,6 +140,40 @@ export default function ProfileScreen({ onClose }: Props) {
       { text: 'Cancel', style: 'cancel' },
       { text: 'Sign Out', style: 'destructive', onPress: signOut },
     ]);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'This will permanently delete your account and all associated data. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            // Second confirmation to prevent accidents
+            Alert.alert(
+              'Are you absolutely sure?',
+              'Your profile, favorites, and all personal data will be permanently removed.',
+              [
+                { text: 'Keep Account', style: 'cancel' },
+                {
+                  text: 'Delete Permanently',
+                  style: 'destructive',
+                  onPress: async () => {
+                    const { error } = await deleteAccount();
+                    if (error) {
+                      Alert.alert('Error', error);
+                    }
+                  },
+                },
+              ],
+            );
+          },
+        },
+      ],
+    );
   };
 
   const experience = profile?.experience_level
@@ -280,6 +314,11 @@ export default function ProfileScreen({ onClose }: Props) {
           <Text style={s.logoutText}>Sign Out</Text>
         </TouchableOpacity>
 
+        {/* Delete account */}
+        <TouchableOpacity style={s.deleteBtn} onPress={handleDeleteAccount} activeOpacity={0.8}>
+          <Text style={s.deleteText}>Delete Account</Text>
+        </TouchableOpacity>
+
         <View style={{ height: 140 }} />
       </ScrollView>
     </View>
@@ -342,4 +381,6 @@ const s = StyleSheet.create({
 
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginHorizontal: 20, marginTop: 32, paddingVertical: 16, borderRadius: 16, backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)' },
   logoutText: { color: '#ef4444', fontSize: 15, fontFamily: F_BOLD },
+  deleteBtn: { alignItems: 'center', justifyContent: 'center', marginHorizontal: 20, marginTop: 16, paddingVertical: 14, borderRadius: 16 },
+  deleteText: { color: 'rgba(255,255,255,0.3)', fontSize: 13, fontFamily: F_REG },
 });
