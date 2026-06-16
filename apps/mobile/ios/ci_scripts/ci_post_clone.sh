@@ -55,6 +55,12 @@ npm run build --workspace=@virtual-window/astronomy-engine
 echo "▸ Installing CocoaPods…"
 brew install cocoapods
 
+# cmake is required when Hermes needs to be built from source
+# (happens when prebuilt artifacts aren't available for the current
+# React Native version + Xcode combination).
+echo "▸ Installing cmake…"
+brew install cmake
+
 echo "▸ pod install…"
 cd "$MOBILE_IOS_DIR"
 pod install
