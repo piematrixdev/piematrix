@@ -22,6 +22,13 @@ export interface MoonPosition {
   dRA: number;
   /** Angular offset from planet center in Dec (arcseconds, north positive) */
   dDec: number;
+  /**
+   * Line-of-sight offset from the planet center (arcseconds). Positive means
+   * the moon is on the near side of its orbit (toward the observer); negative
+   * means the far side (behind the planet). Used to give the moon system real
+   * depth so the planet can occlude moons passing behind it.
+   */
+  dLos: number;
   /** Apparent magnitude */
   magnitude: number;
   /** Parent planet id */
@@ -85,23 +92,27 @@ export function computeGalileanMoons(date: Date, jupiterDistAU: number): MoonPos
     const L = (moon.L0 + (360 / moon.period) * d) % 360;
     const Lrad = L * DEG;
 
-    // Position angle in orbit (simplified — circular, equatorial plane)
-    // X = semi-major axis * sin(L), Y = semi-major axis * cos(L) * cos(inclination)
-    // For Galilean moons, orbital inclination to line of sight is small (~3°)
-    // so we approximate: dRA = a * sin(L), dDec ≈ 0 (edge-on view from Earth)
+    // Position angle in orbit (simplified — circular orbit seen nearly
+    // edge-on). Decompose the circular orbit of radius `a` into three axes:
+    //   sin(L)            → east/west on the sky (tangential)
+    //   cos(L)·cos(tilt)  → line of sight (depth, toward/away from observer)
+    //   cos(L)·sin(tilt)  → north/south on the sky (small, from axial tilt)
+    const tilt = 3.1 * DEG; // Jupiter's equatorial plane tilt to our line of sight
     const xJupRadii = moon.a * Math.sin(Lrad);
-    // Small Y component from Jupiter's axial tilt (~3.1°) and orbital inclination
-    const yJupRadii = moon.a * Math.cos(Lrad) * Math.sin(3.1 * DEG);
+    const losJupRadii = moon.a * Math.cos(Lrad) * Math.cos(tilt);
+    const yJupRadii = moon.a * Math.cos(Lrad) * Math.sin(tilt);
 
     // Convert from Jupiter radii to arcseconds
     const dRA = xJupRadii * rJupArcsec;
     const dDec = yJupRadii * rJupArcsec;
+    const dLos = losJupRadii * rJupArcsec;
 
     moons.push({
       id: moon.id,
       name: moon.name,
       dRA,
       dDec,
+      dLos,
       magnitude: moon.mag,
       parentId: 'jupiter',
     });
@@ -138,14 +149,17 @@ export function computeTitan(date: Date, saturnDistAU: number): MoonPosition {
   const L = (TITAN.L0 + (360 / TITAN.period) * d) % 360;
   const Lrad = L * DEG;
 
+  const tilt = 26.7 * DEG; // Saturn's ring/axial tilt to our line of sight
   const xSatRadii = TITAN.a * Math.sin(Lrad);
-  const ySatRadii = TITAN.a * Math.cos(Lrad) * Math.sin(26.7 * DEG); // Saturn's tilt
+  const losSatRadii = TITAN.a * Math.cos(Lrad) * Math.cos(tilt);
+  const ySatRadii = TITAN.a * Math.cos(Lrad) * Math.sin(tilt);
 
   return {
     id: TITAN.id,
     name: TITAN.name,
     dRA: xSatRadii * rSatArcsec,
     dDec: ySatRadii * rSatArcsec,
+    dLos: losSatRadii * rSatArcsec,
     magnitude: TITAN.mag,
     parentId: 'saturn',
   };

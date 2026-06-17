@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import type { Star, Planet, HorizontalCoordinates, MoonPosition, SunPosition, DeepSkyPosition } from '@virtual-window/astronomy-engine';
 import { getSaturnRingTiltRad } from '@virtual-window/astronomy-engine';
 import { createTextSprite } from './glLabels';
-import { fovToMagnitude } from './stars';
+import { effectiveLimitingMagnitude } from './stars';
 import { computeGalileanMoons, computeTitan } from './planetaryMoons';
 import { getGroundAsset, DEFAULT_GROUND_ID } from './grounds';
 import rawConstellationData from './data/constellations.json';
@@ -146,6 +146,23 @@ const DSO_COLORS: Record<string, [number, number, number]> = {
   Galaxy: [0.7, 0.5, 1.0], Nebula: [1.0, 0.35, 0.55], 'Open Cluster': [0.5, 0.85, 1.0],
   'Globular Cluster': [1.0, 0.85, 0.4], 'Planetary Nebula': [0.3, 1.0, 0.75],
 };
+
+// --- Planet glow: makes a distant planet read as a glowing star point ---
+const PLANET_GLOW_FRAG = `
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  varying vec2 vUv;
+  void main() {
+    vec2 c = vUv - 0.5;
+    float d = length(c) * 2.0; // 0 at center .. 1 at plane edge
+    // Tight bright core + soft wide halo (additive) — a star-like glow.
+    float core = exp(-d * d * 28.0);
+    float halo = exp(-d * d * 4.0) * 0.45;
+    float a = clamp(core + halo, 0.0, 1.0) * uOpacity;
+    if (a < 0.004) discard;
+    gl_FragColor = vec4(uColor * (0.7 + core * 0.8), a);
+  }
+`;
 
 // --- Reusable billboard shader material factory ---
 function makeBillboardSprite(
@@ -587,6 +604,8 @@ interface Props {
   lst: number;
   /** Observer latitude in degrees */
   observerLatitude: number;
+  /** Bortle-derived naked-eye limiting magnitude (sky brightness limit) */
+  limitingMag: number;
   /** Red night vision mode */
   redMode?: boolean;
   /** Selected ground texture id (see grounds.ts) */
@@ -646,12 +665,69 @@ const SPEC: Record<string, number> = {
 // Reusable origin vector for billboard facing — avoids per-frame allocation.
 const BILLBOARD_ORIGIN = new THREE.Vector3(0, 0, 0);
 
+/**
+ * Build a local orthonormal frame at a point on the celestial sphere (the
+ * camera sits at the origin). Returns:
+ *   out   — unit vector pointing away from the camera (line of sight, outward)
+ *   east  — unit tangent pointing "right" on the sky (world-up × out)
+ *   north — unit tangent pointing "up" on the sky (out × east)
+ * Used to place moons in a real 3D ring around their planet (tangential +
+ * line-of-sight depth) so the planet can occlude moons passing behind it.
+ */
+function skyBasis(x: number, y: number, z: number) {
+  const len = Math.hypot(x, y, z) || 1;
+  const ox = x / len, oy = y / len, oz = z / len;
+  // east = worldUp(0,1,0) × out = (oz, 0, -ox)
+  let ex = oz, ey = 0, ez = -ox;
+  let elen = Math.hypot(ex, ey, ez);
+  if (elen < 1e-6) { ex = 1; ey = 0; ez = 0; elen = 1; }
+  ex /= elen; ey /= elen; ez /= elen;
+  // north = out × east
+  const nx = oy * ez - oz * ey;
+  const ny = oz * ex - ox * ez;
+  const nz = ox * ey - oy * ex;
+  return { ox, oy, oz, ex, ey, ez, nx, ny, nz };
+}
+
 // Real angular radii in arcseconds (approximate, average Earth-planet distance).
 // Hoisted to module scope so updateCelestials doesn't reallocate it per frame.
 const PLANET_ANG_RADIUS_ARCSEC: Record<string, number> = {
   jupiter: 20.0, saturn: 8.5, mars: 7.0, venus: 12.0,
   mercury: 3.5, neptune: 1.15, uranus: 1.8,
 };
+
+// Mean physical radii (km) — used to size moons relative to their parent
+// planet so a moon's on-screen size keeps the real moon/planet proportion.
+const BODY_RADIUS_KM: Record<string, number> = {
+  jupiter: 69911, saturn: 58232,
+  io: 1821.6, europa: 1560.8, ganymede: 2634.1, callisto: 2410.3, titan: 2574.7,
+};
+const MOON_PARENT: Record<string, string> = {
+  io: 'jupiter', europa: 'jupiter', ganymede: 'jupiter', callisto: 'jupiter',
+  titan: 'saturn',
+};
+
+// Shared planet sizing constants/helpers (used by both the renderer and the
+// label layout so the two always agree on where a planet/moon is and how big).
+const ARCSEC_TO_WORLD = (R - 10) * Math.PI / (180 * 3600); // CR = R - 10
+const PLANET_ZOOM_MAGNIFICATION = 40; // exaggerates tiny real discs so zoom "flies in"
+const PLANET_DOT_PX = 1.4;            // star-like point at wide FOV (px radius)
+
+/** World-space radius for a fixed on-screen pixel radius at the given FOV. */
+function pxToWorldRadius(px: number, fov: number, minScreenDim: number): number {
+  return (px / minScreenDim) * (fov * Math.PI / 180) * (R - 10);
+}
+
+/**
+ * Rendered world radius of a planet: the larger of the star-like dot floor
+ * (wide FOV) and its magnified true size (a fixed world size, so it grows on
+ * zoom). Keeps planets and their moon systems sized consistently everywhere.
+ */
+function planetRenderedWorldRadius(angRadiusArcsec: number, fov: number, minScreenDim: number): number {
+  const dotWorld = pxToWorldRadius(PLANET_DOT_PX, fov, minScreenDim);
+  return Math.max(dotWorld, angRadiusArcsec * ARCSEC_TO_WORLD * PLANET_ZOOM_MAGNIFICATION);
+}
+
 
 
 function SkyRendererImpl(props: Props) {
@@ -666,10 +742,12 @@ function SkyRendererImpl(props: Props) {
   const skyGroupRef = useRef<THREE.Group | null>(null);
   const planetMeshes = useRef<THREE.Mesh[]>([]);
   const planetSpheresRef = useRef<Map<string, THREE.Mesh>>(new Map());
+  const planetGlowsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const moonDotsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const saturnRingMeshRef = useRef<THREE.Mesh | null>(null);
   const moonMeshRef = useRef<THREE.Mesh | null>(null);
   const sunMeshRef = useRef<THREE.Mesh | null>(null);
+  const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   const orbitalPathRef = useRef<THREE.Line | null>(null);
   const dsoMeshes = useRef<THREE.Mesh[]>([]);
   const satMeshes = useRef<THREE.Mesh[]>([]);
@@ -696,6 +774,19 @@ function SkyRendererImpl(props: Props) {
 
     const scene = new THREE.Scene();
     sceneRef.current = scene;
+
+    // --- Lighting (for 3D planet shading / phases) ---
+    // A faint ambient keeps the night side of a planet from going pure black,
+    // and a directional light from the Sun's direction sculpts the lit
+    // hemisphere so planets look like spheres (and Venus/Mercury/Mars show
+    // their crescent phases) instead of flat discs.
+    const ambient = new THREE.AmbientLight(0xffffff, 0.14);
+    scene.add(ambient);
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1.5);
+    sunLight.position.set(0, 1, 0); // updated each frame from the Sun's position
+    scene.add(sunLight);
+    scene.add(sunLight.target); // target stays at origin
+    sunLightRef.current = sunLight;
 
     const cam = new THREE.PerspectiveCamera(60, W / H, 0.1, 1200);
     cam.position.set(0, 0, 0);
@@ -809,6 +900,7 @@ function SkyRendererImpl(props: Props) {
         uLatitude: { value: 0.0 },
         uCoreSize: { value: CORE_SIZE },
         uClipHorizon: { value: 1.0 },  // 1.0 = clip below horizon, 0.0 = show all
+        uExtinctionK: { value: 0.11 }, // atmospheric extinction (mag/airmass)
       },
       vertexShader: `
         attribute float size;   // pre-computed radius in pixels
@@ -823,6 +915,7 @@ function SkyRendererImpl(props: Props) {
         uniform float uLatitude;
         uniform float uCoreSize;
         uniform float uClipHorizon;
+        uniform float uExtinctionK;
         varying lowp vec4 vColor;
         varying float vPtSize;
 
@@ -837,16 +930,28 @@ function SkyRendererImpl(props: Props) {
           // Position is pre-computed horizontal coordinates (from sky-calculator)
           vec3 pos = position;
 
+          // World position (used for horizon clip + atmospheric extinction).
+          vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+
           // Horizon clip — when ground is on, hide stars below altitude 0.
           // worldY > 0 means above the horizontal plane.
           if (uClipHorizon > 0.5) {
-            vec4 worldPos = modelMatrix * vec4(pos, 1.0);
             if (worldPos.y < 0.0) {
               gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
               gl_PointSize = 0.0;
               return;
             }
           }
+
+          // Atmospheric extinction — stars dim as they approach the horizon
+          // because their light passes through more air (higher airmass).
+          // sinAlt = normalized worldY; airmass ≈ 1/sin(alt). We only dim the
+          // brightness (never hard-cull) so behaviour with ground off is
+          // unchanged apart from a realistic fade toward the horizon.
+          float sinAlt = normalize(worldPos.xyz).y;
+          float airmass = 1.0 / (clamp(sinAlt, 0.04, 1.0));
+          float extMag = uExtinctionK * (airmass - 1.0);
+          float extFactor = clamp(pow(10.0, -0.4 * extMag), 0.0, 1.0);
 
           // Subtle twinkle (only for brighter stars)
           float twinkle = 1.0;
@@ -877,8 +982,9 @@ function SkyRendererImpl(props: Props) {
 
           // Color: desaturate (real stars look mostly white with subtle tint)
           vec3 starCol = mix(color, vec3(dot(color, vec3(0.299, 0.587, 0.114))), 0.5);
-          // Luminance as alpha (faint = dim, bright = full)
-          vColor = vec4(starCol, lum * twinkle);
+          // Luminance as alpha (faint = dim, bright = full), dimmed by the
+          // atmosphere as the star nears the horizon.
+          vColor = vec4(starCol, lum * twinkle * extFactor);
         }
       `,
       fragmentShader: `
@@ -1308,19 +1414,33 @@ function SkyRendererImpl(props: Props) {
       const fwd = artFwd;
       let anyVisible = false;
 
+      // First pass: find the SINGLE constellation whose center is closest to
+      // the screen centre (largest dot with the camera forward vector). Only
+      // that one is allowed to show — this prevents 2-3 overlapping figures
+      // from appearing at once when several centres fall inside the cone.
+      let bestIdx = -1;
+      let bestDot = ART_DOT_THRESHOLD;
+      if (showConst && haveArt) {
+        for (let i = 0; i < constArtEntries.length; i++) {
+          const e = constArtEntries[i];
+          const [cx, cy, cz] = raDec2xyz(e.ra, e.dec, 1);
+          artTmp.set(cx, cy, cz);
+          if (skyGroupRef.current) artTmp.applyMatrix4(skyGroupRef.current.matrixWorld);
+          artTmp.normalize();
+          const aboveHorizon = artTmp.y > -0.05;
+          if (clipBelow && !aboveHorizon) continue;
+          const dot = fwd.dot(artTmp);
+          if (dot > bestDot) {
+            bestDot = dot;
+            bestIdx = i;
+          }
+        }
+      }
+
+      // Second pass: fade in only the winner, fade everyone else out.
       for (let i = 0; i < constArtEntries.length; i++) {
         const e = constArtEntries[i];
-        // Local equatorial direction → world (after skyGroup rotation)
-        const [cx, cy, cz] = raDec2xyz(e.ra, e.dec, 1);
-        artTmp.set(cx, cy, cz);
-        if (skyGroupRef.current) artTmp.applyMatrix4(skyGroupRef.current.matrixWorld);
-        artTmp.normalize();
-
-        const dot = fwd.dot(artTmp);
-        // Hide entirely when its center is below the horizon and ground is on
-        const aboveHorizon = artTmp.y > -0.05;
-        const wantVisible = showConst && haveArt && dot > ART_DOT_THRESHOLD
-          && (!clipBelow || aboveHorizon);
+        const wantVisible = i === bestIdx;
 
         const cur = artOpacities[i];
         let next = cur;
@@ -1717,30 +1837,73 @@ function SkyRendererImpl(props: Props) {
     scene.add(sunSprite);
     sunMeshRef.current = sunSprite;
 
-    // --- Moon billboard sprite ---
-    const moonSprite = makeBillboardSprite(100, MOON_FRAG, {
-      uPhaseAngle: { value: 180.0 },
-      uIllumination: { value: 1.0 },
+    // --- Moon: real 3D textured sphere (lit by the Sun for accurate phases) ---
+    // A lit sphere (not a flat billboard) so it has true 3D shape, shows the
+    // correct phase/terminator from the Sun-direction light, and carries a
+    // real surface texture + displacement/bump relief like the planets.
+    const moonGeo = new THREE.SphereGeometry(1, 96, 64);
+    const moonSphereMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 1.0,
+      metalness: 0.0,
+      emissive: 0x0a0c14,        // faint earthshine on the unlit side
+      emissiveIntensity: 1.0,
+      depthTest: true,
+      depthWrite: true,
     });
-    moonSprite.visible = false;
-    moonSprite.renderOrder = 2;
-    scene.add(moonSprite);
-    moonMeshRef.current = moonSprite;
+    const moonSphere = new THREE.Mesh(moonGeo, moonSphereMat);
+    moonSphere.visible = false;
+    moonSphere.renderOrder = 9;
+    scene.add(moonSphere);
+    moonMeshRef.current = moonSphere;
+    // Load the surface texture, then the displacement map (doubles as a bump
+    // map for crater shading near the terminator).
+    (async () => {
+      try {
+        const t = await loadTextureAsync({ asset: require('../assets/planets/Moon_tex_2k.jpg') });
+        moonSphereMat.map = t;
+        moonSphereMat.needsUpdate = true;
+      } catch (e) {}
+      try {
+        const dsp = await loadTextureAsync({ asset: require('../assets/planets/ldem_3_8bit.jpg') });
+        // Bump map: cheap normal perturbation → crater relief that catches the
+        // light along the terminator.
+        moonSphereMat.bumpMap = dsp;
+        moonSphereMat.bumpScale = 1.2;
+        // Displacement map: actual geometric relief (subtle — real lunar relief
+        // is tiny relative to the radius). Needs the subdivided sphere above.
+        // ldem_3_8bit is a real Lunar DEM (elevation) map.
+        moonSphereMat.displacementMap = dsp;
+        moonSphereMat.displacementScale = 0.025;
+        moonSphereMat.displacementBias = -0.0125;
+        moonSphereMat.needsUpdate = true;
+      } catch (e) {}
+    })();
 
     // --- Planet textured spheres ---
     // Same pattern as ground texture loading (which works)
     const planetSphereMap = new Map<string, THREE.Mesh>();
     const planetIds = ['jupiter', 'saturn', 'mars', 'venus', 'mercury', 'neptune', 'uranus'];
     for (const id of planetIds) {
-      const geo = new THREE.SphereGeometry(1, 32, 24);
-      // Saturn writes to depth buffer so its ring's back half is occluded.
-      // Other planets keep depthWrite off (default for our sky objects).
-      const writeDepth = id === 'saturn';
-      const mat = new THREE.MeshBasicMaterial({
+      const geo = new THREE.SphereGeometry(1, 48, 32);
+      // Standard (lit) material so the Sun-direction light sculpts a real 3D
+      // sphere with a day/night terminator (phases). A small emissive keeps
+      // the dark limb faintly visible rather than pure black.
+      //
+      // depthTest + depthWrite are ON so the planet body occludes any moon
+      // passing behind it (and Saturn occludes the back half of its ring),
+      // giving the system genuine 3D depth rather than a flat decal. The
+      // background (stars, Milky Way, atmosphere) does not write depth, so
+      // planets still draw correctly in front of it.
+      const mat = new THREE.MeshStandardMaterial({
         color: 0xaaaaaa,
+        roughness: 1.0,
+        metalness: 0.0,
+        emissive: 0x222222,
+        emissiveIntensity: 1.0,
         side: THREE.FrontSide,
-        depthTest: false,
-        depthWrite: false,
+        depthTest: true,
+        depthWrite: true,
         transparent: false,
       });
       const mesh = new THREE.Mesh(geo, mat);
@@ -1749,15 +1912,27 @@ function SkyRendererImpl(props: Props) {
       scene.add(mesh);
       planetSphereMap.set(id, mesh);
     }
-    // Load textures one by one (same as ground.png pattern)
+    // Load textures one by one (same as ground.png pattern). The texture is
+    // used both as the diffuse map and (dimly) as the emissive map so the
+    // unlit side still shows faint surface detail.
+    const applyTex = (id: string, t: THREE.Texture) => {
+      const m = planetSphereMap.get(id);
+      if (!m) return;
+      const mm = m.material as THREE.MeshStandardMaterial;
+      mm.map = t;
+      mm.emissiveMap = t;
+      mm.emissive.set(0x333333);
+      mm.color.set(0xffffff);
+      mm.needsUpdate = true;
+    };
     (async () => {
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_jupiter.jpg') }); const m = planetSphereMap.get('jupiter'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_saturn.jpg') }); const m = planetSphereMap.get('saturn'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_mars.jpg') }); const m = planetSphereMap.get('mars'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_venus_surface.jpg') }); const m = planetSphereMap.get('venus'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_mercury.jpg') }); const m = planetSphereMap.get('mercury'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_neptune.jpg') }); const m = planetSphereMap.get('neptune'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
-      try { const t = await loadTextureAsync({ asset: require('../assets/planets/2k_uranus.jpg') }); const m = planetSphereMap.get('uranus'); if (m) { (m.material as THREE.MeshBasicMaterial).map = t; (m.material as THREE.MeshBasicMaterial).color.set(0xffffff); (m.material as THREE.MeshBasicMaterial).needsUpdate = true; } } catch(e) {}
+      try { applyTex('jupiter', await loadTextureAsync({ asset: require('../assets/planets/2k_jupiter.jpg') })); } catch(e) {}
+      try { applyTex('saturn', await loadTextureAsync({ asset: require('../assets/planets/2k_saturn.jpg') })); } catch(e) {}
+      try { applyTex('mars', await loadTextureAsync({ asset: require('../assets/planets/2k_mars.jpg') })); } catch(e) {}
+      try { applyTex('venus', await loadTextureAsync({ asset: require('../assets/planets/2k_venus_surface.jpg') })); } catch(e) {}
+      try { applyTex('mercury', await loadTextureAsync({ asset: require('../assets/planets/2k_mercury.jpg') })); } catch(e) {}
+      try { applyTex('neptune', await loadTextureAsync({ asset: require('../assets/planets/2k_neptune.jpg') })); } catch(e) {}
+      try { applyTex('uranus', await loadTextureAsync({ asset: require('../assets/planets/2k_uranus.jpg') })); } catch(e) {}
     })();
     // Saturn ring — large flat disc that wraps around the sphere body.
     // The back half is occluded by Saturn's sphere via depth testing.
@@ -1808,10 +1983,26 @@ function SkyRendererImpl(props: Props) {
     // Store in ref for updateCelestials access
     planetSpheresRef.current = planetSphereMap;
 
+    // --- Planet glow sprites (distant planets read as glowing star points) ---
+    const planetGlowMap = new Map<string, THREE.Mesh>();
+    for (const id of planetIds) {
+      const rgb = PLANET_COLORS[id] ?? [1, 1, 1];
+      const glow = makeBillboardSprite(1, PLANET_GLOW_FRAG, {
+        uColor: { value: new THREE.Vector3(rgb[0], rgb[1], rgb[2]) },
+        uOpacity: { value: 1.0 },
+      });
+      glow.visible = false;
+      glow.renderOrder = 8; // under the textured sphere (10)
+      scene.add(glow);
+      planetGlowMap.set(id, glow);
+    }
+    planetGlowsRef.current = planetGlowMap;
+
     // --- Planetary moon dots (Galilean + Titan) ---
-    // Glowing spheres that appear near Jupiter/Saturn.
-    const moonDotGeo = new THREE.SphereGeometry(1.0, 12, 12);
-    const moonDotMat = new THREE.MeshBasicMaterial({ color: 0xffffee });
+    // Small spheres that orbit Jupiter/Saturn in real 3D — depth-tested so the
+    // planet occludes any moon passing behind it.
+    const moonDotGeo = new THREE.SphereGeometry(1.0, 16, 16);
+    const moonDotMat = new THREE.MeshBasicMaterial({ color: 0xffffee, depthTest: true, depthWrite: true });
     const moonDotIds = ['io', 'europa', 'ganymede', 'callisto', 'titan'];
     const moonDotMap = new Map<string, THREE.Mesh>();
     for (const id of moonDotIds) {
@@ -1939,7 +2130,9 @@ function SkyRendererImpl(props: Props) {
       if (moonMeshRef.current) moonMeshRef.current.visible = p.showLayers.moon && !!p.moonPosition;
 
       // Update star shader uniforms (cheap — these are per-frame)
-      const maxMag = fovToMagnitude(currentFov);
+      // Limiting magnitude follows the Stellarium model: the Bortle naked-eye
+      // limit at natural FOV, with a capped fainter-star bonus as you zoom in.
+      const maxMag = effectiveLimitingMagnitude(currentFov, p.limitingMag ?? 6.0);
       starMat.uniforms.uMaxMag.value = maxMag;
       starMat.uniforms.uFov.value = currentFov;
       starMat.uniforms.uLST.value = p.lst * 15 * Math.PI / 180;
@@ -2001,9 +2194,13 @@ function SkyRendererImpl(props: Props) {
       const rollAngle = TMP_EULER.z; // camera roll in radians
       const REF_FOV = 30;
       const fovScale = Math.max(0.4, Math.min(4, currentFov / REF_FOV));
+      // Global "a bit smaller" multiplier for all text labels.
+      const LABEL_SHRINK = 0.8;
 
-      // Helper to apply constant-pixel-size scaling to a sprite.
-      const scaleSpriteToFov = (s: THREE.Sprite, applyRoll: boolean) => {
+      // Helper to apply constant-pixel-size scaling to a sprite, with an
+      // optional extra multiplier (used for the global shrink + per-object
+      // dynamic sizing so closer/bigger/brighter objects get larger labels).
+      const scaleSpriteToFov = (s: THREE.Sprite, applyRoll: boolean, sizeMul = 1) => {
         if (!s.visible) return;
         if (applyRoll) s.material.rotation = -rollAngle;
         const ud = s.userData as { baseX?: number; baseY?: number };
@@ -2011,21 +2208,24 @@ function SkyRendererImpl(props: Props) {
           ud.baseX = s.scale.x;
           ud.baseY = s.scale.y;
         }
-        s.scale.set(ud.baseX * fovScale, ud.baseY * fovScale, 1);
+        s.scale.set(ud.baseX * fovScale * sizeMul, ud.baseY * fovScale * sizeMul, 1);
       };
 
-      // Dynamic labels (stars, planets, satellites, DSOs, constellations…)
+      // Dynamic labels (stars, planets, satellites, DSOs, constellations…) —
+      // smaller overall, and modulated by each object's dynamic size factor.
       for (let i = 0; i < labelSprites.current.length; i++) {
-        scaleSpriteToFov(labelSprites.current[i], true);
+        const s = labelSprites.current[i];
+        const dyn = (s.userData as { dynScale?: number }).dynScale ?? 1;
+        scaleSpriteToFov(s, true, LABEL_SHRINK * dyn);
       }
       // Coordinate grid labels (alt/az/equatorial)
-      for (let i = 0; i < altGridLabels.length; i++) scaleSpriteToFov(altGridLabels[i], true);
-      for (let i = 0; i < azGridLabels.length; i++) scaleSpriteToFov(azGridLabels[i], true);
-      for (let i = 0; i < eqGridLabels.length; i++) scaleSpriteToFov(eqGridLabels[i], true);
+      for (let i = 0; i < altGridLabels.length; i++) scaleSpriteToFov(altGridLabels[i], true, LABEL_SHRINK);
+      for (let i = 0; i < azGridLabels.length; i++) scaleSpriteToFov(azGridLabels[i], true, LABEL_SHRINK);
+      for (let i = 0; i < eqGridLabels.length; i++) scaleSpriteToFov(eqGridLabels[i], true, LABEL_SHRINK);
       // Satellite icons (sprites under satMeshes — keep upright but no roll
-      // counter-rotation needed since the icon is symmetric).
+      // counter-rotation needed since the icon is symmetric). Left at full size.
       for (let i = 0; i < satMeshes.current.length; i++) {
-        scaleSpriteToFov(satMeshes.current[i] as unknown as THREE.Sprite, false);
+        scaleSpriteToFov(satMeshes.current[i] as unknown as THREE.Sprite, false, 1);
       }
 
       // Show only the constellation art closest to screen center
@@ -2044,6 +2244,10 @@ function SkyRendererImpl(props: Props) {
     // Sun and moon are in the scene — simple lookAt
     if (sunMeshRef.current?.visible) sunMeshRef.current.lookAt(cam.position);
     if (moonMeshRef.current?.visible) moonMeshRef.current.lookAt(cam.position);
+    // Planet glow halos face the camera too.
+    for (const [, glow] of planetGlowsRef.current) {
+      if (glow.visible) glow.lookAt(cam.position);
+    }
     // DSOs are in the skyGroup — lookAt origin (camera is at origin).
     // Reuse a module-level origin vector to avoid per-frame allocation.
     for (let i = 0; i < dsoMeshes.current.length; i++) {
@@ -2112,19 +2316,18 @@ function SkyRendererImpl(props: Props) {
       // faint stars stay visibly dimmer while the brightest still stand out.
       const flux = Math.pow(2.512, 5 - mag);
 
-      // Alpha — capped at 1.0 (brightest stars), with a clear gradient
-      // through the visible range so dim stars look genuinely dimmer.
-      // Mag -1.5 → 1.0, Mag 0 → 1.0, Mag 2 → 0.82, Mag 3 → 0.66,
-      // Mag 5 → 0.42, Mag 6.5 → 0.33.
-      const luminance = Math.min(1.0, 0.2 + Math.pow(flux, 0.35) * 0.22);
+      // Alpha — brighter overall so faint naked-eye stars stay clearly
+      // visible (the previous curve dimmed them too far in the name of
+      // realism). Higher floor + gain; still capped at 1.0 for the brightest.
+      // Mag -1.5 → 1.0, Mag 0 → 1.0, Mag 2 → ~0.9, Mag 5 → 0.6, Mag 6.5 → 0.5.
+      const luminance = Math.min(1.0, 0.36 + Math.pow(flux, 0.35) * 0.25);
       buf.lums[i] = luminance;
 
-      // Radius — steep flux^0.45 curve gives ~8× size ratio between Sirius
-      // and a mag-5 star. Combined with the shader-side bright-boost and
-      // bloom that scales with alpha, the brightest stars dominate visually
-      // while faint stars stay as crisp small dots.
-      // Mag -1.5 → 9.3, Mag 0 → 6.3, Mag 2 → 3.0, Mag 5 → 1.15, Mag 6.5 → 0.83
-      const radius = 0.45 + Math.pow(flux, 0.45) * 0.7;
+      // Radius — larger across the board so stars read as crisp points rather
+      // than near-invisible specks, while keeping the steep bright-vs-faint
+      // ratio. Mag -1.5 → ~11, Mag 0 → ~7.6, Mag 2 → ~3.8, Mag 5 → 1.5,
+      // Mag 6.5 → 1.15.
+      const radius = 0.7 + Math.pow(flux, 0.45) * 0.8;
       buf.sizes[i] = radius;
 
       buf.seeds[i] = Math.abs(Math.sin(x * 12.9898 + y * 78.233 + z * 45.164)) % 1.0;
@@ -2337,8 +2540,25 @@ function SkyRendererImpl(props: Props) {
       wx: number; wy: number; wz: number;
       text: string; color: string; scale: number;
       priority: number;
+      /** Per-object dynamic size factor (1 = neutral). Reflects how big/close/
+       *  bright the object currently appears. */
+      dyn?: number;
     };
     const candidates: LabelCandidate[] = [];
+
+    // --- Dynamic label-size helpers (object distance/size awareness) ---
+    const lf = p.fovRef ? p.fovRef.current : p.fov;
+    const labelMinDim = Math.min(W, H);
+    const worldPerPx = pxToWorldRadius(1, lf, labelMinDim);
+    // Map an object's on-screen apparent radius (px) → a label size factor.
+    // Tiny points get a smaller label; large discs (zoomed-in planets, Moon)
+    // get a bigger one. Bounded so labels never balloon or vanish.
+    const sizeDyn = (worldRadius: number): number => {
+      const px = worldRadius / Math.max(worldPerPx, 1e-6);
+      return Math.max(0.8, Math.min(1.7, 0.82 + px * 0.012));
+    };
+    // Brighter stars get slightly larger labels.
+    const magDyn = (mag: number): number => Math.max(0.78, Math.min(1.2, 1.08 - mag * 0.05));
 
     // Cardinals (always show — fixed in horizontal frame)
     const cardinals: Array<[string, number, string, number?]> = [
@@ -2357,43 +2577,63 @@ function SkyRendererImpl(props: Props) {
       if (p.sunPosition && p.showLayers.sun
           && !(clipBelow && p.sunPosition.altitude < 0)) {
         const [wx, wy, wz] = hz2v(p.sunPosition.azimuth + 1.5, p.sunPosition.altitude + 1.2, CR);
-        candidates.push({ wx, wy, wz, text: 'Sun', color: '#ffcc00', scale: 14.0, priority: 1 });
+        candidates.push({ wx, wy, wz, text: 'Sun', color: '#ffcc00', scale: 14.0, priority: 1, dyn: sizeDyn(960 * ARCSEC_TO_WORLD) });
       }
       if (p.moonPosition && p.showLayers.moon
           && !(clipBelow && p.moonPosition.altitude < 0)) {
         const [wx, wy, wz] = hz2v(p.moonPosition.azimuth + 1.5, p.moonPosition.altitude + 1.2, CR);
-        candidates.push({ wx, wy, wz, text: 'Moon', color: '#e8e0c8', scale: 14.0, priority: 1 });
+        candidates.push({ wx, wy, wz, text: 'Moon', color: '#e8e0c8', scale: 14.0, priority: 1, dyn: sizeDyn(1850 * ARCSEC_TO_WORLD) });
       }
 
       if (p.showLayers.planets) {
+        const labelFov = p.fovRef ? p.fovRef.current : p.fov;
+        const minDim = Math.min(W, H);
+
         for (const planet of p.planets) {
           const hp = p.planetPositions.get(planet.id);
           if (!hp) continue;
           if (clipBelow && hp.altitude < 0) continue;
-          const [wx, wy, wz] = hz2v(hp.azimuth + 1.5, hp.altitude + 1.2, CR);
-          candidates.push({ wx, wy, wz, text: planet.name, color: '#ffdd44', scale: 12.0, priority: 2 });
+          // Place the name just off the planet's disc edge, scaling with the
+          // rendered size: a small gap beside a dot at wide FOV, hugging the
+          // limb when zoomed in and the disc is large.
+          const [px, py, pz] = hz2v(hp.azimuth, hp.altitude, CR);
+          const rr = planetRenderedWorldRadius(PLANET_ANG_RADIUS_ARCSEC[planet.id] ?? 3.0, labelFov, minDim);
+          const f = skyBasis(px, py, pz);
+          const off = rr * 1.2 + pxToWorldRadius(9, labelFov, minDim);
+          candidates.push({
+            wx: px + (f.ex + f.nx) * off,
+            wy: py + (f.ey + f.ny) * off,
+            wz: pz + (f.ez + f.nz) * off,
+            text: planet.name, color: '#ffdd44', scale: 12.0, priority: 2, dyn: sizeDyn(rr),
+          });
         }
 
-        // Planetary moon labels (only when zoomed in enough to see them)
-        const labelFov = p.fovRef ? p.fovRef.current : p.fov;
+        // Planetary moon labels (only when zoomed in enough to see them).
+        // Positioned with the SAME 3D math as the moon dots so each label
+        // tracks its moon exactly, then nudged out along the sky-north axis.
         if (labelFov < 20) {
           const now = new Date();
-          const arcsecToWorld = CR * Math.PI / (180 * 3600);
 
           // Jupiter's moons
           const jupiterPos = p.planetPositions.get('jupiter');
           if (jupiterPos && !(clipBelow && jupiterPos.altitude < 0)) {
-            const jupRealRadius = 20.0 * arcsecToWorld;
-            const jupRendered = Math.max(2.0, jupRealRadius);
+            const jupRealRadius = (PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0) * ARCSEC_TO_WORLD;
+            const jupRendered = planetRenderedWorldRadius(PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0, labelFov, minDim);
             const moonScale = jupRendered / jupRealRadius;
             const moons = computeGalileanMoons(now, 5.2);
             const [jx, jy, jz] = hz2v(jupiterPos.azimuth, jupiterPos.altitude, CR);
+            const f = skyBasis(jx, jy, jz);
+            const gap = jupRendered * 0.15 + pxToWorldRadius(5, labelFov, minDim);
             for (const moon of moons) {
-              const dx = moon.dRA * arcsecToWorld * moonScale;
-              const dy = moon.dDec * arcsecToWorld * moonScale;
-              // Offset label to the side (along RA) to avoid overlapping the dot
-              const labelOffsetX = (moon.dRA >= 0 ? 1 : -1) * jupRendered * 0.12;
-              candidates.push({ wx: jx + dx + labelOffsetX, wy: jy + dy + jupRendered * 0.1, wz: jz, text: moon.name, color: '#bbb', scale: 3.0, priority: 4 });
+              const e = moon.dRA * ARCSEC_TO_WORLD * moonScale;
+              const n = moon.dDec * ARCSEC_TO_WORLD * moonScale;
+              const l = moon.dLos * ARCSEC_TO_WORLD * moonScale;
+              candidates.push({
+                wx: jx + f.ex * e + f.nx * n - f.ox * l + f.nx * gap,
+                wy: jy + f.ey * e + f.ny * n - f.oy * l + f.ny * gap,
+                wz: jz + f.ez * e + f.nz * n - f.oz * l + f.nz * gap,
+                text: moon.name, color: '#bbb', scale: 3.0, priority: 4, dyn: 0.85,
+              });
             }
           }
 
@@ -2401,14 +2641,22 @@ function SkyRendererImpl(props: Props) {
           if (labelFov < 12) {
             const saturnPos = p.planetPositions.get('saturn');
             if (saturnPos && !(clipBelow && saturnPos.altitude < 0)) {
-              const satRealRadius = 8.5 * arcsecToWorld;
-              const satRendered = Math.max(2.0, satRealRadius);
+              const satRealRadius = (PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5) * ARCSEC_TO_WORLD;
+              const satRendered = planetRenderedWorldRadius(PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5, labelFov, minDim);
               const moonScale = satRendered / satRealRadius;
               const titan = computeTitan(now, 9.5);
               const [sx, sy, sz] = hz2v(saturnPos.azimuth, saturnPos.altitude, CR);
-              const dx = titan.dRA * arcsecToWorld * moonScale;
-              const dy = titan.dDec * arcsecToWorld * moonScale;
-              candidates.push({ wx: sx + dx, wy: sy + dy + satRendered * 0.1, wz: sz, text: 'Titan', color: '#bbb', scale: 3.0, priority: 4 });
+              const f = skyBasis(sx, sy, sz);
+              const gap = satRendered * 0.15 + pxToWorldRadius(5, labelFov, minDim);
+              const e = titan.dRA * ARCSEC_TO_WORLD * moonScale;
+              const n = titan.dDec * ARCSEC_TO_WORLD * moonScale;
+              const l = titan.dLos * ARCSEC_TO_WORLD * moonScale;
+              candidates.push({
+                wx: sx + f.ex * e + f.nx * n - f.ox * l + f.nx * gap,
+                wy: sy + f.ey * e + f.ny * n - f.oy * l + f.ny * gap,
+                wz: sz + f.ez * e + f.nz * n - f.oz * l + f.nz * gap,
+                text: 'Titan', color: '#bbb', scale: 3.0, priority: 4, dyn: 0.85,
+              });
             }
           }
         }
@@ -2418,7 +2666,7 @@ function SkyRendererImpl(props: Props) {
       for (const star of namedStars) {
         const [wx, wy, wz] = eqToWorld(star.ra, star.dec + 0.8, R);
         if (clipBelow && wy < 0) continue;
-        candidates.push({ wx, wy, wz, text: star.name!, color: '#ddd', scale: 7.0, priority: 3 });
+        candidates.push({ wx, wy, wz, text: star.name!, color: '#ddd', scale: 7.0, priority: 3, dyn: magDyn(star.magnitude) });
       }
 
       // Constellation labels — compute directly from raw data, no stale prop dependency
@@ -2514,6 +2762,7 @@ function SkyRendererImpl(props: Props) {
       }
 
       sprite.position.set(c.wx, c.wy, c.wz);
+      (sprite.userData as { dynScale?: number }).dynScale = c.dyn ?? 1;
       sprite.visible = true;
     }
 
@@ -2541,14 +2790,45 @@ function SkyRendererImpl(props: Props) {
     const scene = sceneRef.current;
     if (!scene) return;
 
+    // Current Stellarium-convention FOV (min screen dimension). Read the live
+    // ref so planet sizing tracks the pinch gesture smoothly mid-zoom.
+    const currentFov = p.fovRef?.current ?? p.fov;
+    const minScreenDim = Math.min(W, H);
+
+    // Aim the Sun-direction light so planets are lit from the real Sun. Both
+    // planets and the Sun live in scene space (positioned via hz2v), so the
+    // Sun's unit direction is exactly the light direction we want.
+    if (sunLightRef.current) {
+      if (p.sunPosition) {
+        const [sx, sy, sz] = hz2v(p.sunPosition.azimuth, p.sunPosition.altitude, 1);
+        sunLightRef.current.position.set(sx, sy, sz);
+      } else {
+        sunLightRef.current.position.set(0, 1, 0);
+      }
+    }
+
     // Rebuild labels with deconfliction
     rebuildLabels(p, cam);
 
-    // --- Planets as shader billboards + textured spheres ---
-    // Don't remove/recreate billboard sprites every frame — just hide textured spheres
-    // The textured spheres are persistent (created once), just reposition them
+    // --- Planets: zoom-aware level of detail ---
+    // To the naked eye a planet is an unresolved point of light — just a
+    // bright "star". Only a telescope reveals its disc. We mirror that: the
+    // sphere is scaled to the planet's REAL angular size, but never allowed
+    // to shrink below a small star-like dot. At wide FOV the real disc is far
+    // below that dot floor, so planets read as bright points; as you zoom in
+    // the real disc eventually exceeds the floor and grows naturally, showing
+    // the actual planet (and its moons spread in true proportion).
     for (const [, mesh] of planetSpheresRef.current) mesh.visible = false;
+    for (const [, glow] of planetGlowsRef.current) glow.visible = false;
     if (saturnRingMeshRef.current) saturnRingMeshRef.current.visible = false;
+
+    const arcsecToWorld = ARCSEC_TO_WORLD;
+    // Star-like dot floor (wide FOV) in world units, and the shared rendered-
+    // radius helper (dot floor vs magnified true size). Defined at module
+    // scope so the label layout sizes/places planets and moons identically.
+    const dotWorld = pxToWorldRadius(PLANET_DOT_PX, currentFov, minScreenDim);
+    const planetRenderedRadius = (angRadiusArcsec: number) =>
+      planetRenderedWorldRadius(angRadiusArcsec, currentFov, minScreenDim);
 
     if (p.showLayers.planets) {
       for (const planet of p.planets) {
@@ -2561,19 +2841,37 @@ function SkyRendererImpl(props: Props) {
         // Show textured sphere (persistent, no allocation)
         const sphere = planetSpheresRef.current.get(planet.id);
         if (sphere) {
-          // Convert arcseconds to world units on the celestial sphere.
-          // At CR=490, 1 arcsec = CR * pi / (180*3600) ≈ 0.00238 world units.
-          // That's too small to see at wide FOV, so we apply a minimum size
-          // and let the camera zoom handle magnification naturally.
-          const arcsecToWorld = CR * Math.PI / (180 * 3600);
-          const realRadius = (PLANET_ANG_RADIUS_ARCSEC[planet.id] ?? 3.0) * arcsecToWorld;
-          // Minimum visible size so planets are identifiable at wide FOV
-          const minSize = 2.0;
-          const scale = Math.max(minSize, realRadius);
+          const angRadius = PLANET_ANG_RADIUS_ARCSEC[planet.id] ?? 3.0;
+          const magnifiedReal = angRadius * arcsecToWorld * PLANET_ZOOM_MAGNIFICATION;
+          const scale = Math.max(dotWorld, magnifiedReal);
+          // When the planet is essentially a point (magnified disc still below
+          // the dot floor) light it fully so it reads as a bright star; once it
+          // resolves into a disc, let the Sun light sculpt its phase.
+          const resolved = magnifiedReal >= dotWorld * 0.9;
+          const mat = sphere.material as THREE.MeshStandardMaterial;
+          mat.emissiveIntensity = resolved ? 1.0 : 2.2;
           sphere.position.set(x, y, z);
           sphere.scale.setScalar(scale);
           sphere.rotation.y += 0.003;
           sphere.visible = true;
+
+          // Glow: a star-like halo that dominates while the planet is a point
+          // and fades out as the disc resolves on zoom-in.
+          const glow = planetGlowsRef.current.get(planet.id);
+          if (glow) {
+            // Halo radius in world units (constant on-screen pixel size).
+            const glowWorld = pxToWorldRadius(7.0, currentFov, minScreenDim);
+            glow.position.set(x, y, z);
+            glow.scale.setScalar(glowWorld * 2.0); // plane spans ±half = radius
+            // Full glow when unresolved; fade ∝ dotWorld/magnifiedReal as the
+            // real disc grows past the dot floor.
+            const glowOpacity = magnifiedReal > dotWorld
+              ? Math.max(0, Math.min(1, dotWorld / magnifiedReal))
+              : 1.0;
+            (glow.material as THREE.ShaderMaterial).uniforms.uOpacity.value = glowOpacity * 0.95;
+            glow.visible = glowOpacity > 0.02;
+          }
+
           // Position Saturn's ring (tilt is fixed at init, just place + scale)
           if (planet.id === 'saturn' && saturnRingMeshRef.current) {
             saturnRingMeshRef.current.position.set(x, y, z);
@@ -2585,12 +2883,27 @@ function SkyRendererImpl(props: Props) {
     }
 
     // --- Planetary moons (Galilean + Titan) ---
-    // Positioned using the same arcsec-to-world conversion as the planets.
-    // This ensures moons are correctly placed relative to the planet disc.
+    // Each moon is positioned in real 3D around its planet (the orbital radius
+    // scales with the planet's rendered size, so a moon sits at its true number
+    // of planet-radii away) and SIZED by its real moon/planet radius ratio, so
+    // it keeps the correct proportion to the planet — with a small on-screen
+    // floor so it stays visible as a dot until you zoom in enough to resolve it.
     for (const [, dot] of moonDotsRef.current) dot.visible = false;
     if (p.showLayers.planets) {
       const now = new Date();
-      const arcsecToWorld = CR * Math.PI / (180 * 3600);
+      // Size a moon proportionally to its parent planet. The dominant term is
+      // the true moon/planet radius ratio, so a moon is a small dot beside the
+      // disc. A tiny absolute floor keeps it from vanishing, and a hard cap at
+      // a small fraction of the planet's radius guarantees it can NEVER look as
+      // big as the planet (which is what made them read like extra planets).
+      const moonWorldRadius = (moonId: string, planetRenderedRadius: number) => {
+        const parent = MOON_PARENT[moonId];
+        const ratio = (BODY_RADIUS_KM[moonId] ?? 1800) / (BODY_RADIUS_KM[parent] ?? 60000);
+        const proportional = planetRenderedRadius * ratio;
+        const minR = pxToWorldRadius(0.8, currentFov, minScreenDim); // visibility floor
+        const maxR = planetRenderedRadius * 0.08;                    // ≤ 8% of planet radius
+        return Math.min(Math.max(proportional, minR), maxR);
+      };
 
       // Jupiter's moons
       const jupiterPos = p.planetPositions.get('jupiter');
@@ -2598,18 +2911,26 @@ function SkyRendererImpl(props: Props) {
         const jupDistAU = 5.2;
         const moons = computeGalileanMoons(now, jupDistAU);
         const [jx, jy, jz] = hz2v(jupiterPos.azimuth, jupiterPos.altitude, CR);
-        // Use same scale as planet — if planet has minSize applied, scale moons too
-        const jupRealRadius = 20.0 * arcsecToWorld;
-        const jupRendered = Math.max(2.0, jupRealRadius);
-        const moonScale = jupRendered / jupRealRadius; // 1.0 if real size is above min
+        const jupRealRadius = (PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0) * arcsecToWorld;
+        const jupRendered = planetRenderedRadius(PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0);
+        const moonScale = jupRendered / jupRealRadius; // orbit spread ∝ planet size
+        const f = skyBasis(jx, jy, jz);
 
         for (const moon of moons) {
           const dot = moonDotsRef.current.get(moon.id);
           if (!dot) continue;
-          const dx = moon.dRA * arcsecToWorld * moonScale;
-          const dy = moon.dDec * arcsecToWorld * moonScale;
-          dot.position.set(jx + dx, jy + dy, jz);
-          dot.scale.setScalar(Math.max(0.3, jupRendered * 0.035));
+          // 3D offset: east/north on the sky plane, plus line-of-sight depth
+          // (toward camera = -out) so moons orbit in a real ring and the
+          // planet body occludes those passing behind it.
+          const e = moon.dRA * arcsecToWorld * moonScale;
+          const n = moon.dDec * arcsecToWorld * moonScale;
+          const l = moon.dLos * arcsecToWorld * moonScale;
+          dot.position.set(
+            jx + f.ex * e + f.nx * n - f.ox * l,
+            jy + f.ey * e + f.ny * n - f.oy * l,
+            jz + f.ez * e + f.nz * n - f.oz * l,
+          );
+          dot.scale.setScalar(moonWorldRadius(moon.id, jupRendered));
           dot.visible = true;
         }
       }
@@ -2622,57 +2943,47 @@ function SkyRendererImpl(props: Props) {
         const dot = moonDotsRef.current.get('titan');
         if (dot) {
           const [sx, sy, sz] = hz2v(saturnPos.azimuth, saturnPos.altitude, CR);
-          const satRealRadius = 8.5 * arcsecToWorld;
-          const satRendered = Math.max(2.0, satRealRadius);
+          const satRealRadius = (PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5) * arcsecToWorld;
+          const satRendered = planetRenderedRadius(PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5);
           const moonScale = satRendered / satRealRadius;
-          const dx = titan.dRA * arcsecToWorld * moonScale;
-          const dy = titan.dDec * arcsecToWorld * moonScale;
-          dot.position.set(sx + dx, sy + dy, sz);
-          dot.scale.setScalar(Math.max(0.3, satRendered * 0.035));
+          const f = skyBasis(sx, sy, sz);
+          const e = titan.dRA * arcsecToWorld * moonScale;
+          const n = titan.dDec * arcsecToWorld * moonScale;
+          const l = titan.dLos * arcsecToWorld * moonScale;
+          dot.position.set(
+            sx + f.ex * e + f.nx * n - f.ox * l,
+            sy + f.ey * e + f.ny * n - f.oy * l,
+            sz + f.ez * e + f.nz * n - f.oz * l,
+          );
+          dot.scale.setScalar(moonWorldRadius('titan', satRendered));
           dot.visible = true;
         }
       }
     }
 
-    // --- Moon ---
+    // --- Moon (real 3D sphere, real angular size, grows on zoom) ---
     if (moonMeshRef.current && p.moonPosition && p.showLayers.moon
         && !(p.showGround && p.moonPosition.altitude < 0)) {
       const [x, y, z] = hz2v(p.moonPosition.azimuth, p.moonPosition.altitude, CR);
-      moonMeshRef.current.position.set(x, y, z);
-      moonMeshRef.current.visible = true;
+      const moonSph = moonMeshRef.current;
+      moonSph.position.set(x, y, z);
 
-      // Compute light direction: lit side faces the sun
-      const moonMat = moonMeshRef.current.material as THREE.ShaderMaterial;
-      if (moonMat.uniforms.uPhaseAngle && p.sunPosition) {
-        const illum = (p.moonPosition as any).illumination ?? 50;
-        moonMat.uniforms.uIllumination.value = illum / 100;
+      // Angular size: the Moon is really ≈ 0.52° across. We render it notably
+      // larger than life (~1.0° across) so it reads clearly as the Moon and
+      // stays well bigger than the star-like planets, while still growing into
+      // a detailed body as you zoom in.
+      const MOON_ANG_RADIUS_ARCSEC = 1850;
+      const realRadius = MOON_ANG_RADIUS_ARCSEC * arcsecToWorld;
+      const minWorld = (1.5 / minScreenDim) * (currentFov * Math.PI / 180) * CR;
+      // Below-horizon fade scale (gentle shrink as it sets)
+      const mScale = p.moonPosition.altitude >= 0
+        ? 1.0 : Math.max(0.5, 1.0 + p.moonPosition.altitude / 40);
+      moonSph.scale.setScalar(Math.max(minWorld, realRadius) * mScale);
 
-        // Compute the angle from moon to sun in the sky (on the projected plane)
-        // This determines which direction the lit crescent faces
-        const moonAz = p.moonPosition.azimuth * Math.PI / 180;
-        const moonAlt = p.moonPosition.altitude * Math.PI / 180;
-        const sunAz = p.sunPosition.azimuth * Math.PI / 180;
-        const sunAlt = p.sunPosition.altitude * Math.PI / 180;
-
-        // Position angle: angle from moon to sun measured from "up" (north celestial pole direction)
-        // Simplified: compute the bearing from moon to sun on the sky sphere
-        const dAz = sunAz - moonAz;
-        const posAngle = Math.atan2(
-          Math.sin(dAz) * Math.cos(sunAlt),
-          Math.cos(moonAlt) * Math.sin(sunAlt) - Math.sin(moonAlt) * Math.cos(sunAlt) * Math.cos(dAz)
-        );
-
-        // Convert to the shader's coordinate system
-        // posAngle = 0 means sun is "above" moon, PI/2 = sun is to the right
-        // The shader uses phaseAngle where light comes from the right at 90°
-        // We pass the position angle directly and let the shader use it as rotation
-        moonMat.uniforms.uPhaseAngle.value = posAngle * 180 / Math.PI;
-      }
-
-      // Fade below horizon
-      const mFade = p.moonPosition.altitude >= 0 ? 1.0 : Math.max(0.2, 1.0 + p.moonPosition.altitude / 25);
-      const mScale = p.moonPosition.altitude >= 0 ? 1.0 : Math.max(0.5, 1.0 + p.moonPosition.altitude / 40);
-      moonMeshRef.current.scale.setScalar(mScale);
+      // Orientation (near side toward Earth) is handled by faceBillboards'
+      // lookAt(camera). The phase/terminator comes from the Sun-direction
+      // light, so it is always physically correct — no manual phase math.
+      moonSph.visible = true;
     } else if (moonMeshRef.current) {
       moonMeshRef.current.visible = false;
     }

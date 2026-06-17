@@ -334,7 +334,7 @@ export function useSkyEngine(bortle: number) {
 
   const loadStarsForCurrentZoom = useCallback((fov: number) => {
     setLoadingStars(true);
-    loadStarsForZoom(fov, (stars, phase) => {
+    loadStarsForZoom(fov, limMag, (stars, phase) => {
       stars = stars.filter(s => s.id !== 'PIE-001');
       stars.push({ id: 'PIE-001', name: 'Raagavi Shrivastava', ra: 15.1, dec: -19.0, magnitude: 3.8, spectralType: 'M' } as any);
       starsRef.current = stars;
@@ -343,7 +343,7 @@ export function useSkyEngine(bortle: number) {
       setLoadMsg(phase);
       setLoadingStars(false);
     }).then(() => setLoadingStars(false));
-  }, []);
+  }, [limMag]);
 
   return {
     state: { ready, loadMsg, error, loadingStars, skyVer, isRealTime, displayTime },

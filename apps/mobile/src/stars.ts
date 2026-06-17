@@ -29,6 +29,29 @@ export function fovToMagnitude(fov: number): number {
   return Math.min(10, Math.max(3.0, baseMag + magGain - magLoss));
 }
 
+/**
+ * Effective limiting magnitude — the Stellarium-style realistic model.
+ *
+ * The naked-eye limit comes from the sky brightness (Bortle scale, passed in
+ * as `nakedEyeMag`). At a natural human field of view (~60°) you see exactly
+ * down to that limit and no more — this is what keeps the sky from being an
+ * unrealistic swarm of stars under light-polluted skies.
+ *
+ * Zooming in simulates optical aid (binoculars → telescope). Each halving of
+ * the FOV below the reference reveals roughly one extra magnitude of fainter
+ * stars, capped at +5 over the naked-eye limit so even a deep zoom stays
+ * believable. The absolute ceiling matches the deepest catalog tier.
+ *
+ * @param fov         current field of view (degrees, min screen dimension)
+ * @param nakedEyeMag Bortle-derived naked-eye limiting magnitude
+ */
+export function effectiveLimitingMagnitude(fov: number, nakedEyeMag: number): number {
+  const refFov = 60; // natural unaided field of view
+  if (fov >= refFov) return nakedEyeMag;
+  const aidedBonus = Math.min(5.0, Math.log2(refFov / Math.max(fov, 1)) * 1.0);
+  return Math.min(12.0, nakedEyeMag + aidedBonus);
+}
+
 /** Internal: load up to targetMag from the offline catalog, with fallback. */
 async function fetchUpToMagnitude(targetMag: number): Promise<Star[]> {
   try {
@@ -69,9 +92,10 @@ export async function loadStarsProgressively(
 /** Load additional stars for a given FOV (zoom level). */
 export async function loadStarsForZoom(
   fov: number,
+  nakedEyeMag: number,
   onStars: (stars: Star[], phase: string) => void,
 ): Promise<void> {
-  const targetMag = fovToMagnitude(fov);
+  const targetMag = effectiveLimitingMagnitude(fov, nakedEyeMag);
   // Only load deeper tiers if we need more than what's cached
   if (targetMag <= loadedMagnitude || isLoading) return;
   isLoading = true;

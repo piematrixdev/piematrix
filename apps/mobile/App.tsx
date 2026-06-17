@@ -20,7 +20,7 @@ import type { HorizontalCoordinates } from '@virtual-window/astronomy-engine';
 import { useSkyPointing } from './src/useSkyPointing';
 import SkyRenderer from './src/SkyRenderer';
 import SkyIcon from './src/components/SkyIcon';
-import { fovToMagnitude } from './src/stars';
+import { effectiveLimitingMagnitude } from './src/stars';
 import { resolveStarName } from './src/starNames';
 import { useSkyEngine } from './src/hooks/useSkyEngine';
 import { useTouchGestures } from './src/hooks/useTouchGestures';
@@ -51,13 +51,13 @@ const { width: W, height: H } = Dimensions.get('window');
  * AR-matched FOV: the camera FOV used when entering the sky view.
  *
  * FOV here uses Stellarium's convention: angular extent across the screen's
- * MIN dimension (horizontal in portrait). 30° is a comfortable starting
+ * MIN dimension (horizontal in portrait). 40° is a comfortable starting
  * value — wide enough to give context, narrow enough that AR pointing at
  * the real sky stays roughly aligned. Users can pinch in/out from there.
  */
-const AR_FOV = 30;
+const AR_FOV = 40;
 /** Default FOV for manual (non-AR) navigation — same default for consistency. */
-const DEFAULT_MANUAL_FOV = 30;
+const DEFAULT_MANUAL_FOV = 40;
 
 const BORTLE_MAG: Record<number, number> = {
   1: 7.6, 2: 7.1, 3: 6.6, 4: 6.2, 5: 5.6, 6: 5.1, 7: 4.6, 8: 4.1, 9: 3.5,
@@ -217,7 +217,7 @@ function AppContent() {
     // the user can only tap stars that are actually drawn on screen.
     // Zooming in raises the limit, making fainter stars tappable.
     const fov = fovRef.current;
-    const magLimit = fovToMagnitude(fov);
+    const magLimit = effectiveLimitingMagnitude(fov, limMag);
 
     // Approximate the on-screen pixel size of a star with the given
     // magnitude — mirrors the formula used in the star shader so the
@@ -364,7 +364,7 @@ function AppContent() {
       name: best?.obj?.name ?? null,
       type: best?.obj?.type ?? null,
     };
-  }, []);
+  }, [limMag]);
 
   // ─── Screen routing ──────────────────────────────────────────────────────────
 
@@ -481,6 +481,7 @@ function AppContent() {
         selectedConstellationId={selectedObject?.constellation ?? null}
         lst={skyRefs.lst.current}
         observerLatitude={skyRefs.coords.current.latitude}
+        limitingMag={limMag}
         redMode={show.redMode ?? false}
         groundId={groundId}
         selectedObjectRef={selectedObjectRef}
