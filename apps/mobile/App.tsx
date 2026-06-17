@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
-  ActivityIndicator, Modal, TextInput, FlatList, Animated,
+  ActivityIndicator, Modal, TextInput, FlatList, Animated, Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Font from 'expo-font';
@@ -42,6 +42,7 @@ import SpaceShooterGame from './src/SpaceShooterGame';
 import EventsScreen from './src/EventsScreen';
 import { scheduleDailySkyNotification, scheduleEventReminders } from './src/notifications/PushNotificationService';
 import * as Notifications from 'expo-notifications';
+import { getTrackingPermissionsAsync, requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
 import OnboardingScreen from './src/OnboardingScreen';
 import { getConstellation, formatRA, formatDec, formatAzAlt, getSpectralDescription, estimateDistance, SPECTRAL_COLORS } from './src/starInfo';
 
@@ -1171,6 +1172,29 @@ export default function App() {
       'Poppins-Black': require('./assets/fonts/Poppins-Black.ttf'),
     }).then(() => setFontsLoaded(true)).catch(() => setFontsLoaded(true));
   }, []);
+
+  // App Tracking Transparency — present Apple's ATT prompt once, on first
+  // launch, after the UI is up (iOS only). Required because the app declares
+  // NSUserTrackingUsageDescription; without this call the system dialog never
+  // appears, which is what App Review flags. We only ask while the status is
+  // still "undetermined" so we never nag a user who already chose.
+  useEffect(() => {
+    if (!fontsLoaded || Platform.OS !== 'ios') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { status, canAskAgain } = await getTrackingPermissionsAsync();
+        if (cancelled || status !== 'undetermined' || !canAskAgain) return;
+        // Small delay so it doesn't collide with app launch / other prompts.
+        await new Promise((r) => setTimeout(r, 1000));
+        if (cancelled) return;
+        await requestTrackingPermissionsAsync();
+      } catch {
+        // Non-fatal — tracking simply stays disabled if the request fails.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [fontsLoaded]);
 
   if (!fontsLoaded) {
     return (

@@ -62,7 +62,13 @@
       ],
       "expo-apple-authentication",
       "expo-web-browser",
-      "expo-asset"
+      "expo-asset",
+      [
+        "expo-tracking-transparency",
+        {
+          "userTrackingPermission": "Pie Matrix uses this to provide a personalized experience and show relevant sky events. You can change this anytime in Settings."
+        }
+      ]
     ],
     "extra": {
       "eas": {
