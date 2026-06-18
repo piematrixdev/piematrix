@@ -138,6 +138,26 @@ const { width: W, height: H } = Dimensions.get('window');
 const R = 500; // Large sky sphere for realistic depth perception
 const CR = R - 10; // Celestial object radius
 
+/**
+ * Effective field of view of the rear camera across the screen's MIN dimension
+ * (the width in portrait), in degrees, when the live preview is shown
+ * full-screen (aspectFill crops the 4:3 sensor to the tall screen).
+ *
+ * In camera (AR passthrough) mode the rendered star layer MUST use this exact
+ * FOV with a plain rectilinear projection so that a phone rotation sweeps the
+ * virtual stars across the screen at the same rate as the real background.
+ * If the rendered FOV is narrower than this, stars race ahead of reality and
+ * the sky reads like a small enclosing dome ("room sphere"); if wider, they
+ * lag behind. Calibrated for the iPhone main "wide" camera — tune on device.
+ *
+ * This is the FOV across the screen's MINOR axis (width in portrait). It is the
+ * same quantity Stellarium reports when its camera overlay is enabled (~32.9°
+ * on recent iPhones), because the full-screen preview crops the 4:3 sensor
+ * hard on the width. (The vertical FOV is derived from this and the screen
+ * aspect, coming out ~65° to match the lens.)
+ */
+const AR_CAMERA_MIN_FOV_DEG = 33;
+
 const PLANET_COLORS: Record<string, [number, number, number]> = {
   mercury: [0.69, 0.63, 0.56], venus: [1.0, 0.91, 0.69], mars: [1.0, 0.4, 0.2],
   jupiter: [0.83, 0.65, 0.42], saturn: [0.92, 0.84, 0.65], uranus: [0.53, 0.8, 0.87], neptune: [0.33, 0.4, 0.87],
@@ -673,6 +693,14 @@ interface Props {
   limitingMag: number;
   /** Red night vision mode */
   redMode?: boolean;
+  /** Camera passthrough (AR) mode — GL clears transparent and opaque sky
+   *  layers (ground, atmosphere, Milky Way) hide so stars overlay the live
+   *  camera feed rendered behind this view. */
+  cameraMode?: boolean;
+  /** Measured device camera FOV across the screen's MIN dimension (degrees),
+   *  used in camera mode to match the live preview. Falls back to a calibrated
+   *  default when the native value is unavailable. */
+  cameraFovDeg?: number;
   /** Selected ground texture id (see grounds.ts) */
   groundId?: string;
   /** Currently selected object ref (for showing orbital path — bypasses React render) */
@@ -809,6 +837,10 @@ function SkyRendererImpl(props: Props) {
   const rendererRef = useRef<any>(null);
   const starPtsRef = useRef<THREE.Points | null>(null);
   const constLinesRef = useRef<THREE.LineSegments | null>(null);
+  // Per-constellation unit-vector centres (sky/equatorial frame), index-aligned
+  // with the aConst vertex attribute, used to pick the centred constellation
+  // whose lines should be revealed (mirrors the constellation-art behaviour).
+  const lineCentersRef = useRef<Array<{ x: number; y: number; z: number }>>([]);
   const skyGroupRef = useRef<THREE.Group | null>(null);
   const planetMeshes = useRef<THREE.Mesh[]>([]);
   const planetSpheresRef = useRef<Map<string, THREE.Mesh>>(new Map());
@@ -907,7 +939,31 @@ function SkyRendererImpl(props: Props) {
      *   2. Min-dimension → vertical (since portrait phones have W < H):
      *        verticalFov = 2 * atan(tan(minDimFov / 2) * (H / W))
      */
-    function updateProjection(camera: THREE.PerspectiveCamera, fov: number) {
+    function updateProjection(camera: THREE.PerspectiveCamera, fov: number, cameraMode?: boolean, cameraMinDimFov?: number) {
+      // Camera (AR passthrough) mode: the live feed behind the GL view is a
+      // rectilinear (gnomonic) image at the lens's real FOV. To keep virtual
+      // stars locked to the real background as the phone pans, render with a
+      // plain rectilinear projection at that same FOV — NO stereographic remap
+      // and NO zoom FOV (which would desync the overlay from reality). Prefer
+      // the device's measured camera FOV (native bridge); fall back to the
+      // calibrated default when it isn't available.
+      if (cameraMode) {
+        const minDimDeg = (cameraMinDimFov && cameraMinDimFov > 1 && cameraMinDimFov < 170)
+          ? cameraMinDimFov
+          : AR_CAMERA_MIN_FOV_DEG;
+        const minDimRad = (minDimDeg * Math.PI) / 180;
+        let vRad: number;
+        if (H >= W) {
+          // Portrait: min dim = width → scale up to the vertical (larger) axis.
+          vRad = 2 * Math.atan(Math.tan(minDimRad / 2) * (H / W));
+        } else {
+          vRad = minDimRad;
+        }
+        camera.fov = Math.min(178, (vRad * 180) / Math.PI);
+        camera.updateProjectionMatrix();
+        return;
+      }
+
       const fovRad = (Math.min(fov, 175) * Math.PI) / 180;
 
       // Step 1: stereographic → gnomonic-equivalent for the MIN dimension.
@@ -1043,10 +1099,12 @@ function SkyRendererImpl(props: Props) {
           // so they pop with a strong halo at any zoom level.
           float zoomScale = 60.0 / max(uFov, 5.0);
           zoomScale = clamp(zoomScale, 0.7, 3.0);
-          // brightBoost: 1.0 baseline, up to 1.7× for stars of mag ≤ 1
-          // (Sirius/Vega/Arcturus territory) so they really stand out.
+          // brightBoost: a gentle extra size for the brightest stars so they
+          // still pop, but kept small so the magnitude→size range stays
+          // compressed and balanced (Stellarium-like) rather than letting the
+          // brightest stars dwarf everything. Up to ~1.35× for mag ≤ 1.
           float brightFactor = clamp((1.5 - mag) * 0.4, 0.0, 1.0);
-          float brightBoost = 1.0 + brightFactor * 0.7;
+          float brightBoost = 1.0 + brightFactor * 0.35;
           float ptSize = size * uDpr * zoomScale * brightBoost * 1.1;
           // Wide clamp range so brightness ratio survives at all zooms.
           gl_PointSize = clamp(ptSize, 1.0, 50.0);
@@ -1151,25 +1209,36 @@ function SkyRendererImpl(props: Props) {
     // Custom shader material for constellation lines — clips below horizon
     // when ground is on, otherwise shows all the way down.
     const constVertShader = `
+      attribute float aConst;
+      uniform float uWinner;
       varying float vWorldY;
+      varying float vWin;
       void main() {
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         vWorldY = worldPos.y;
+        vWin = (abs(aConst - uWinner) < 0.5) ? 1.0 : 0.0;
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }
     `;
     const constFragGlow = `
       varying float vWorldY;
+      varying float vWin;
       uniform vec3 uColor;
       uniform float uOpacity;
+      uniform float uReveal;        // 0..1 fade for the centred constellation
       uniform float uClipHorizon;  // 1.0 = clip, 0.0 = show full
       void main() {
+        // Only the centred (winning) constellation's lines are drawn; the rest
+        // are discarded so lines behave like the constellation art.
+        if (vWin < 0.5) discard;
         if (uClipHorizon > 0.5) {
           if (vWorldY < -10.0) discard;
         }
         // Soft fade through the horizon when clip is on, full opacity otherwise
         float fade = mix(1.0, smoothstep(-10.0, 15.0, vWorldY), uClipHorizon);
-        gl_FragColor = vec4(uColor, uOpacity * fade);
+        float a = uOpacity * fade * uReveal;
+        if (a < 0.003) discard;
+        gl_FragColor = vec4(uColor, a);
       }
     `;
 
@@ -1179,6 +1248,8 @@ function SkyRendererImpl(props: Props) {
         uColor: { value: new THREE.Color(0x5599dd) },
         uOpacity: { value: 0.6 },
         uClipHorizon: { value: 1.0 },
+        uWinner: { value: -1 },
+        uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
       fragmentShader: constFragGlow,
@@ -1195,6 +1266,8 @@ function SkyRendererImpl(props: Props) {
         uColor: { value: new THREE.Color(0x4488cc) },
         uOpacity: { value: 0.5 },
         uClipHorizon: { value: 1.0 },
+        uWinner: { value: -1 },
+        uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
       fragmentShader: constFragGlow,
@@ -1211,6 +1284,8 @@ function SkyRendererImpl(props: Props) {
         uColor: { value: new THREE.Color(0x66bbff) },
         uOpacity: { value: 0.4 },
         uClipHorizon: { value: 1.0 },
+        uWinner: { value: -1 },
+        uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
       fragmentShader: constFragGlow,
@@ -1227,6 +1302,8 @@ function SkyRendererImpl(props: Props) {
         uColor: { value: new THREE.Color(0x99ccff) },
         uOpacity: { value: 1.0 },
         uClipHorizon: { value: 1.0 },
+        uWinner: { value: -1 },
+        uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
       fragmentShader: constFragGlow,
@@ -1249,9 +1326,19 @@ function SkyRendererImpl(props: Props) {
 
     const artRadius = R - 2;
     const westernIdx = require('../assets/constellations/western-index.json');
+    // Bundled RA/Dec (degrees) for every constellation-art anchor star, keyed
+    // by HIP. The offline star catalog uses Gaia ids (no HIP), so faint anchor
+    // stars never resolve from the loaded catalog — this guarantees every
+    // illustration's anchors resolve regardless of the magnitude tier loaded.
+    const anchorStars = require('./data/anchor-stars.json') as Record<string, [number, number]>;
 
     // Build HIP star → RA/Dec lookup for anchor positioning
     const hipLookup = new Map<number, { ra: number; dec: number }>();
+    // Seed with the complete anchor-star coordinates (degrees).
+    for (const hip in anchorStars) {
+      const [raDeg, decDeg] = anchorStars[hip];
+      hipLookup.set(parseInt(hip, 10), { ra: raDeg, dec: decDeg });
+    }
     for (const c of rawConstellationData as any[]) {
       for (const line of c.lines) {
         if (line.star1.hipId && line.star1.ra) hipLookup.set(line.star1.hipId, { ra: line.star1.ra, dec: line.star1.dec });
@@ -1467,6 +1554,11 @@ function SkyRendererImpl(props: Props) {
 
     // Track per-entry current opacity for independent fade-in/out animations
     const artOpacities: number[] = [];
+    // Constellation LINE reveal state (persistent across frames): which
+    // constellation index is currently shown and its fade level. Lines cross-
+    // fade when the centred constellation changes, mirroring the art.
+    let lineWinner = -1;
+    let lineReveal = 0;
     const artTmp = new THREE.Vector3();
     const artFwd = new THREE.Vector3();  // persistent — avoids per-frame alloc
 
@@ -1534,11 +1626,49 @@ function SkyRendererImpl(props: Props) {
         }
       }
 
-      // Lines fade in together with the art — visible whenever any constellation is showing
-      if (constLinesRef.current) constLinesRef.current.visible = anyVisible;
-      if (constGlowRef.current) constGlowRef.current.visible = anyVisible;
-      if (constGlow2Ref.current) constGlow2Ref.current.visible = anyVisible;
-      if (constGlow3Ref.current) constGlow3Ref.current.visible = anyVisible;
+      // Constellation LINES: reveal only the constellation closest to screen
+      // centre, fading in/out exactly like the art (single figure at a time).
+      const centers = lineCentersRef.current;
+      let lineBest = -1;
+      let lineBestDot = ART_DOT_THRESHOLD;
+      if (showConst && centers.length) {
+        for (let i = 0; i < centers.length; i++) {
+          const cdir = centers[i];
+          artTmp.set(cdir.x, cdir.y, cdir.z);
+          if (skyGroupRef.current) artTmp.applyMatrix4(skyGroupRef.current.matrixWorld);
+          artTmp.normalize();
+          if (clipBelow && artTmp.y <= -0.05) continue;
+          const dot = fwd.dot(artTmp);
+          if (dot > lineBestDot) { lineBestDot = dot; lineBest = i; }
+        }
+      }
+      // Cross-fade: if the centred constellation changed, fade the current one
+      // out first, then switch and fade the new one in.
+      if (lineBest !== lineWinner) {
+        lineReveal = Math.max(0, lineReveal - ART_FADE_OUT);
+        if (lineReveal <= 0.001) lineWinner = lineBest;
+      } else {
+        const target = lineWinner >= 0 ? 1 : 0;
+        lineReveal = target > lineReveal
+          ? Math.min(target, lineReveal + ART_FADE_IN)
+          : Math.max(target, lineReveal - ART_FADE_OUT);
+      }
+      const lineMats = [
+        constLinesRef.current?.material,
+        constGlowRef.current?.material,
+        constGlow2Ref.current?.material,
+        constGlow3Ref.current?.material,
+      ] as Array<THREE.ShaderMaterial | undefined>;
+      const lineVisible = lineReveal > 0.001 && lineWinner >= 0;
+      for (const m of lineMats) {
+        if (!m || !m.uniforms) continue;
+        m.uniforms.uWinner.value = lineWinner;
+        m.uniforms.uReveal.value = lineReveal;
+      }
+      if (constLinesRef.current) constLinesRef.current.visible = lineVisible;
+      if (constGlowRef.current) constGlowRef.current.visible = lineVisible;
+      if (constGlow2Ref.current) constGlow2Ref.current.visible = lineVisible;
+      if (constGlow3Ref.current) constGlow3Ref.current.visible = lineVisible;
 
       // Keep legacy var referenced so the unused-warning stays quiet
       void artOpacity;
@@ -1607,7 +1737,7 @@ function SkyRendererImpl(props: Props) {
       loadedGroundId.current = wantId;
       try {
         const tex = await loadTextureAsync({ asset: getGroundAsset(wantId) });
-        const mat = groundMesh.material as THREE.ShaderMaterial;
+        const mat = groundMesh.material as unknown as THREE.ShaderMaterial;
         if (mat && mat.uniforms && mat.uniforms.map) {
           const old = mat.uniforms.map.value as THREE.Texture | null;
           mat.uniforms.map.value = tex;
@@ -2108,6 +2238,8 @@ function SkyRendererImpl(props: Props) {
     const startTime = Date.now();
     let lastLabelTime = 0;
     let projectionInitialized = false;
+    let lastCameraMode = false;
+    let lastCameraFov = -1;
     // Persistent per-frame temporaries — allocated once, reused every frame
     // (avoids GC churn in the render path).
     const TMP_Q = new THREE.Quaternion();
@@ -2132,12 +2264,26 @@ function SkyRendererImpl(props: Props) {
 
       if (p.pointingRef && p.arMode !== false && p.pointingRef.current.ready) {
         const [qx, qy, qz, qw] = p.pointingRef.current.quaternion;
-        // Smoothing factor: more smoothing at lower FOV (higher zoom)
-        // FOV 60° → factor 0.3 (responsive), FOV 10° → factor 0.06 (very smooth)
-        const smoothFactor = Math.max(0.06, Math.min(0.4, currentFov / 200));
         // SLERP toward the raw sensor quaternion (reused temporary — no alloc).
         TMP_Q.set(qx, qy, qz, qw);
-        c.quaternion.slerp(TMP_Q, smoothFactor);
+        // In camera (AR passthrough) mode the overlay must stay LOCKED to the
+        // real world during deliberate motion, but tiny hand tremor while
+        // holding the phone roughly still shouldn't shake the whole sky.
+        // Velocity-adaptive smoothing solves both: heavy smoothing when the
+        // device is nearly still (filters tremor), ramping to 1:1 tracking the
+        // instant it actually moves (no trailing/drag while panning).
+        // Outside camera mode, keep gentle smoothing (more at higher zoom).
+        if (p.cameraMode) {
+          const angle = c.quaternion.angleTo(TMP_Q); // rad between rendered & true
+          const motion = Math.min(1, angle / 0.012);  // ~0.7°/frame → max tracking
+          // Keep a little smoothing even at full motion (cap < 1) so movement
+          // feels smooth, while still filtering hand tremor heavily at rest.
+          const smoothFactor = 0.15 + (0.6 - 0.15) * motion;
+          c.quaternion.slerp(TMP_Q, smoothFactor);
+        } else {
+          const smoothFactor = Math.max(0.06, Math.min(0.4, currentFov / 200));
+          c.quaternion.slerp(TMP_Q, smoothFactor);
+        }
       } else {
         // Manual mode: smooth interpolation toward target direction
         // Read from ref for 60fps responsiveness (no React re-render needed)
@@ -2153,9 +2299,18 @@ function SkyRendererImpl(props: Props) {
 
       const fovDelta = Math.abs(currentFov - lastFov.current);
       const fovChanged = fovDelta > 0.05;
-      if (fovChanged || !projectionInitialized) {
-        updateProjection(c, currentFov);
+      // Camera-mode toggle changes the projection (rectilinear @ camera FOV vs
+      // stereographic @ zoom FOV) even when the zoom FOV itself is unchanged.
+      const camModeChanged = !!p.cameraMode !== lastCameraMode;
+      // The measured camera FOV can arrive asynchronously after camera mode is
+      // already on; refresh the projection when it changes too.
+      const camFov = p.cameraFovDeg ?? -1;
+      const camFovChanged = p.cameraMode === true && Math.abs(camFov - lastCameraFov) > 0.05;
+      if (fovChanged || camModeChanged || camFovChanged || !projectionInitialized) {
+        updateProjection(c, currentFov, !!p.cameraMode, p.cameraFovDeg);
         lastFov.current = currentFov;
+        lastCameraMode = !!p.cameraMode;
+        lastCameraFov = camFov;
         projectionInitialized = true;
       }
 
@@ -2166,10 +2321,13 @@ function SkyRendererImpl(props: Props) {
       const latRad = p.observerLatitude * Math.PI / 180;
       applySkyRotation(skyGroupRef.current!, latRad, lstRad);
 
-      // Visibility
-      if (groundMeshRef.current) groundMeshRef.current.visible = p.showGround;
-      if (groundOverlayRef.current) groundOverlayRef.current.visible = p.showGround;
-      if (skyDomeRef.current) skyDomeRef.current.visible = p.showAtmosphere;
+      // Visibility. In camera (AR passthrough) mode we hide the opaque sky
+      // layers (ground, atmosphere) so the live camera feed behind the
+      // transparent GL view shows through and the stars overlay reality.
+      const camMode = !!p.cameraMode;
+      if (groundMeshRef.current) groundMeshRef.current.visible = p.showGround && !camMode;
+      if (groundOverlayRef.current) groundOverlayRef.current.visible = p.showGround && !camMode;
+      if (skyDomeRef.current) skyDomeRef.current.visible = p.showAtmosphere && !camMode;
       // Grid visibility
       for (const line of altGridLines) line.visible = p.showLayers.altGrid;
       for (const line of azGridLines) line.visible = p.showLayers.azGrid;
@@ -2193,9 +2351,10 @@ function SkyRendererImpl(props: Props) {
       if (constGlow2Ref.current) {}
       if (constGlow3Ref.current) {}
       if (constArtGroupRef.current) constArtGroupRef.current.visible = p.showLayers.constellations;
-      // Milky Way visibility (only if texture is loaded — mwMat.map is set)
+      // Milky Way visibility (only if texture is loaded — mwMat.map is set).
+      // Hidden in camera mode so it doesn't haze over the live view.
       if (mwMat.map) {
-        mwMesh.visible = p.showLayers.milkyWay;
+        mwMesh.visible = p.showLayers.milkyWay && !camMode;
         mwMat.opacity = 0.4;
       }
       // Sun/Moon visibility
@@ -2210,13 +2369,17 @@ function SkyRendererImpl(props: Props) {
       starMat.uniforms.uFov.value = currentFov;
       starMat.uniforms.uLST.value = p.lst * 15 * Math.PI / 180;
       starMat.uniforms.uLatitude.value = p.observerLatitude * Math.PI / 180;
-      // Horizon clipping — on when ground is shown, off otherwise.
-      const clipHorizon = p.showGround ? 1.0 : 0.0;
+      // Horizon clipping — on when ground is shown OR in camera mode (so stars
+      // below the horizon are hidden and the real ground shows through).
+      const clipHorizon = (p.showGround || camMode) ? 1.0 : 0.0;
       starMat.uniforms.uClipHorizon.value = clipHorizon;
       cGlowMat.uniforms.uClipHorizon.value = clipHorizon;
       cGlow2Mat.uniforms.uClipHorizon.value = clipHorizon;
       cGlow3Mat.uniforms.uClipHorizon.value = clipHorizon;
       cMat.uniforms.uClipHorizon.value = clipHorizon;
+      // Transparent clear in camera mode so the live camera feed behind the
+      // GL view shows through; opaque black otherwise.
+      rendererRef.current.setClearColor(0x000000, camMode ? 0 : 1);
 
       if (p.dataVersion !== lastVer.current) {
         lastVer.current = p.dataVersion;
@@ -2281,7 +2444,7 @@ function SkyRendererImpl(props: Props) {
         if (!s.visible) return;
         if (applyRoll) s.material.rotation = -rollAngle;
         const ud = s.userData as { baseX?: number; baseY?: number };
-        if (ud.baseX === undefined) {
+        if (ud.baseX === undefined || ud.baseY === undefined) {
           ud.baseX = s.scale.x;
           ud.baseY = s.scale.y;
         }
@@ -2439,14 +2602,17 @@ function SkyRendererImpl(props: Props) {
       // visible (the previous curve dimmed them too far in the name of
       // realism). Higher floor + gain; still capped at 1.0 for the brightest.
       // Mag -1.5 → 1.0, Mag 0 → 1.0, Mag 2 → ~0.9, Mag 5 → 0.6, Mag 6.5 → 0.5.
-      const luminance = Math.min(1.0, 0.36 + Math.pow(flux, 0.35) * 0.25);
+      const luminance = Math.min(1.0, 0.44 + Math.pow(flux, 0.35) * 0.22);
       buf.lums[i] = luminance;
 
       // Radius — larger across the board so stars read as crisp points rather
       // than near-invisible specks, while keeping the steep bright-vs-faint
-      // ratio. Mag -1.5 → ~11, Mag 0 → ~7.6, Mag 2 → ~3.8, Mag 5 → 1.5,
-      // Mag 6.5 → 1.15.
-      const radius = 0.7 + Math.pow(flux, 0.45) * 0.8;
+      // Size (CPU-side base radius). Stellarium uses a COMPRESSED magnitude→
+      // size range: bright stars are only a few × bigger than faint ones, not
+      // 10×+. A gentle exponent (0.28) plus a higher floor keeps faint stars
+      // clearly visible while preventing bright stars from ballooning.
+      // Mag -1.5 → ~4.1, Mag 0 → ~3.1, Mag 2 → ~2.3, Mag 5 → ~1.65, Mag 6.5 → ~1.5
+      const radius = 1.15 + Math.pow(flux, 0.28) * 0.55;
       buf.sizes[i] = radius;
 
       buf.seeds[i] = Math.abs(Math.sin(x * 12.9898 + y * 78.233 + z * 45.164)) % 1.0;
@@ -2493,18 +2659,36 @@ function SkyRendererImpl(props: Props) {
     const geo = constLinesRef.current.geometry;
     const r = R - 2; // Same radius as constellation art for alignment
     const pos: number[] = [];
+    const aConst: number[] = [];
+    const centers: Array<{ x: number; y: number; z: number }> = [];
 
+    let idx = 0;
     for (const c of rawConstellationData as any[]) {
+      let sx = 0, sy = 0, sz = 0, n = 0;
       for (const line of c.lines) {
         // RA in JSON is in DEGREES (0-360), Dec in degrees
         const [x1, y1, z1] = raDecDegToCart(line.star1.ra, line.star1.dec, r);
         const [x2, y2, z2] = raDecDegToCart(line.star2.ra, line.star2.dec, r);
         pos.push(x1, y1, z1, x2, y2, z2);
+        aConst.push(idx, idx); // one constellation index per vertex
+        sx += x1 + x2; sy += y1 + y2; sz += z1 + z2; n += 2;
       }
+      // Constellation centre as a normalized direction (for centre-of-screen
+      // selection). Falls back to origin if the constellation has no lines.
+      if (n > 0) {
+        const cx = sx / n, cy = sy / n, cz = sz / n;
+        const L = Math.hypot(cx, cy, cz) || 1;
+        centers.push({ x: cx / L, y: cy / L, z: cz / L });
+      } else {
+        centers.push({ x: 0, y: 0, z: 0 });
+      }
+      idx++;
     }
 
     geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('aConst', new THREE.Float32BufferAttribute(aConst, 1));
     geo.computeBoundingSphere();
+    lineCentersRef.current = centers;
   }
 
   // Label sprite cache — reuse sprites instead of recreating every update
@@ -3336,8 +3520,8 @@ function SkyRendererImpl(props: Props) {
   }, []);
 
   return (
-    <View style={{ flex: 1 }}>
-      <GLView style={{ width: W, height: H }} onContextCreate={onGL} />
+    <View style={{ flex: 1, backgroundColor: 'transparent' }}>
+      <GLView style={{ width: W, height: H, backgroundColor: 'transparent' }} onContextCreate={onGL} />
     </View>
   );
 }
@@ -3367,7 +3551,9 @@ function propsEqual(a: Props, b: Props): boolean {
     a.showAtmosphere !== b.showAtmosphere ||
     a.showGround !== b.showGround ||
     a.selectedConstellationId !== b.selectedConstellationId ||
-    a.observerLatitude !== b.observerLatitude
+    a.observerLatitude !== b.observerLatitude ||
+    a.cameraMode !== b.cameraMode ||
+    a.cameraFovDeg !== b.cameraFovDeg
   ) {
     return false;
   }

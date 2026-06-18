@@ -18,7 +18,18 @@
       "bundleIdentifier": "com.thepiematrix.app",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Pie Matrix needs your location to show the sky above you.",
-        "NSMotionUsageDescription": "Pie Matrix uses motion sensors for AR sky navigation."
+        "NSMotionUsageDescription": "Pie Matrix uses motion sensors for AR sky navigation.",
+        "UIApplicationSceneManifest": {
+          "UIApplicationSupportsMultipleScenes": false,
+          "UISceneConfigurations": {
+            "UIWindowSceneSessionRoleApplication": [
+              {
+                "UISceneConfigurationName": "Default Configuration",
+                "UISceneDelegateClassName": "$(PRODUCT_MODULE_NAME).SceneDelegate"
+              }
+            ]
+          }
+        }
       },
       "appleTeamId": "H2458LP837"
     },
@@ -67,6 +78,12 @@
         "expo-tracking-transparency",
         {
           "userTrackingPermission": "Pie Matrix uses this to provide a personalized experience and show relevant sky events. You can change this anytime in Settings."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Pie Matrix uses the camera to overlay the night sky onto your live surroundings (AR view), and to let you take a profile photo."
         }
       ]
     ],

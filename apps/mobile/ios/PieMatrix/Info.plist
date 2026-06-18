@@ -48,7 +48,7 @@
       <true/>
     </dict>
     <key>NSCameraUsageDescription</key>
-    <string>Pie Matrix uses the camera to let you take a profile photo directly from the app.</string>
+    <string>Pie Matrix uses the camera to overlay the night sky onto your live surroundings (AR view), and to let you take a profile photo.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>Pie Matrix uses your location to calculate which stars, planets, and constellations are visible above you right now.</string>
     <key>NSLocationAlwaysUsageDescription</key>
@@ -67,6 +67,23 @@
     <string>Pie Matrix uses your photo library to let you pick a profile picture that appears on your account and in the community.</string>
     <key>RCTNewArchEnabled</key>
     <true/>
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+      <key>UIApplicationSupportsMultipleScenes</key>
+      <false/>
+      <key>UISceneConfigurations</key>
+      <dict>
+        <key>UIWindowSceneSessionRoleApplication</key>
+        <array>
+          <dict>
+            <key>UISceneConfigurationName</key>
+            <string>Default Configuration</string>
+            <key>UISceneDelegateClassName</key>
+            <string>$(PRODUCT_MODULE_NAME).SceneDelegate</string>
+          </dict>
+        </array>
+      </dict>
+    </dict>
     <key>UIAppFonts</key>
     <array>
       <string>Poppins-Light.ttf</string>

@@ -14,9 +14,15 @@ interface UseTouchGesturesOptions {
   onPan: (dAz: number, dAlt: number) => void;
   onTap: (x: number, y: number) => void;
   onZoomEnd: () => void;
+  /** When true, pinch-zoom fine-tunes the AR camera overlay FOV (cameraFovRef)
+   *  instead of the normal zoom FOV, so the overlay can be locked to the live
+   *  camera. Leaves fovRef untouched. */
+  cameraMode?: boolean;
+  cameraFovRef?: MutableRefObject<number>;
+  onCameraFovChange?: (fov: number) => void;
 }
 
-export function useTouchGestures({ arMode, fovRef, onFovChange, onPan, onTap, onZoomEnd }: UseTouchGesturesOptions) {
+export function useTouchGestures({ arMode, fovRef, onFovChange, onPan, onTap, onZoomEnd, cameraMode, cameraFovRef, onCameraFovChange }: UseTouchGesturesOptions) {
   const lastPinchDist = useRef<number | null>(null);
   const lastTouchPos = useRef<{ x: number; y: number } | null>(null);
   const tapStart = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -26,11 +32,15 @@ export function useTouchGestures({ arMode, fovRef, onFovChange, onPan, onTap, on
   const onTapRef = useRef(onTap);
   const onZoomEndRef = useRef(onZoomEnd);
   const arModeRef = useRef(arMode);
+  const cameraModeRef = useRef(cameraMode);
+  const onCameraFovChangeRef = useRef(onCameraFovChange);
   onFovChangeRef.current = onFovChange;
   onPanRef.current = onPan;
   onTapRef.current = onTap;
   onZoomEndRef.current = onZoomEnd;
   arModeRef.current = arMode;
+  cameraModeRef.current = cameraMode;
+  onCameraFovChangeRef.current = onCameraFovChange;
 
   const handleTouchStart = useCallback((e: any) => {
     const touches = e.nativeEvent.touches;
@@ -55,11 +65,20 @@ export function useTouchGestures({ arMode, fovRef, onFovChange, onPan, onTap, on
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (lastPinchDist.current !== null) {
         const scale = lastPinchDist.current / dist;
-        const currentFov = fovRef.current;
-        const newFov = Math.max(0.5, Math.min(180, currentFov * scale));
-        const rounded = Math.round(newFov * 10) / 10;
-        fovRef.current = rounded;
-        onFovChangeRef.current(rounded);
+        // In camera (AR overlay) mode, pinch calibrates the overlay FOV so the
+        // stars can be locked to the live camera, instead of changing the zoom.
+        if (cameraModeRef.current && cameraFovRef) {
+          const next = Math.max(12, Math.min(110, cameraFovRef.current * scale));
+          const rounded = Math.round(next * 10) / 10;
+          cameraFovRef.current = rounded;
+          onCameraFovChangeRef.current?.(rounded);
+        } else {
+          const currentFov = fovRef.current;
+          const newFov = Math.max(0.5, Math.min(180, currentFov * scale));
+          const rounded = Math.round(newFov * 10) / 10;
+          fovRef.current = rounded;
+          onFovChangeRef.current(rounded);
+        }
       }
       lastPinchDist.current = dist;
       return;

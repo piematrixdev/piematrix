@@ -1,8 +1,9 @@
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
-  ActivityIndicator, Modal, TextInput, FlatList, Animated, Platform,
+  ActivityIndicator, Modal, TextInput, FlatList, Animated, Platform, Alert,
 } from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Font from 'expo-font';
 import { AuthProvider, useAuth } from './src/auth/AuthContext';
@@ -14,10 +15,11 @@ import {
   Setting4, Clock, Building,
   ArrowLeft2,
   Star1, Radar, SearchNormal1, Moon, Heart, Maximize4, LocationDiscover, Eye,
-  Home2, ShoppingBag, Calendar, ProfileCircle, Discover,
+  Home2, ShoppingBag, Calendar, ProfileCircle, Discover, Camera,
 } from 'iconsax-react-native';
 import type { HorizontalCoordinates } from '@virtual-window/astronomy-engine';
 import { useSkyPointing } from './src/useSkyPointing';
+import { getCameraMinDimFovDeg } from './modules/camera-fov';
 import SkyRenderer from './src/SkyRenderer';
 import SkyIcon from './src/components/SkyIcon';
 import { effectiveLimitingMagnitude } from './src/stars';
@@ -40,6 +42,7 @@ import SettingsPanel from './src/SettingsPanel';
 import FeedbackScreen from './src/FeedbackScreen';
 import SpaceShooterGame from './src/SpaceShooterGame';
 import EventsScreen from './src/EventsScreen';
+import PolarScopeScreen from './src/PolarScopeScreen';
 import { scheduleDailySkyNotification, scheduleEventReminders } from './src/notifications/PushNotificationService';
 import * as Notifications from 'expo-notifications';
 import { getTrackingPermissionsAsync, requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
@@ -52,19 +55,19 @@ const { width: W, height: H } = Dimensions.get('window');
  * AR-matched FOV: the camera FOV used when entering the sky view.
  *
  * FOV here uses Stellarium's convention: angular extent across the screen's
- * MIN dimension (horizontal in portrait). 40° is a comfortable starting
+ * MIN dimension (horizontal in portrait). 45° is a comfortable starting
  * value — wide enough to give context, narrow enough that AR pointing at
  * the real sky stays roughly aligned. Users can pinch in/out from there.
  */
-const AR_FOV = 40;
+const AR_FOV = 45;
 /** Default FOV for manual (non-AR) navigation — same default for consistency. */
-const DEFAULT_MANUAL_FOV = 40;
+const DEFAULT_MANUAL_FOV = 45;
 
 const BORTLE_MAG: Record<number, number> = {
   1: 7.6, 2: 7.1, 3: 6.6, 4: 6.2, 5: 5.6, 6: 5.1, 7: 4.6, 8: 4.1, 9: 3.5,
 };
 
-type Screen = 'home' | 'skywatch' | 'shop' | 'support' | 'product' | 'calendar' | 'telescope' | 'category' | 'profile' | 'feedback' | 'game' | 'events';
+type Screen = 'home' | 'skywatch' | 'shop' | 'support' | 'product' | 'calendar' | 'telescope' | 'category' | 'profile' | 'feedback' | 'game' | 'events' | 'polarscope';
 
 // ─── Main App Content ────────────────────────────────────────────────────────
 
@@ -130,6 +133,16 @@ function AppContent() {
   // compass button so the user knows how to re-align if the sky looks off.
   const [showCompassHint, setShowCompassHint] = useState(false);
   const compassPulse = useRef(new Animated.Value(0)).current;
+  // Camera passthrough (AR) — overlay the stars on the live camera feed.
+  const [cameraMode, setCameraMode] = useState(false);
+  const [cameraPerm, requestCameraPerm] = useCameraPermissions();
+  // Device camera FOV (across the screen's MIN dimension) measured natively
+  // when the overlay turns on; null until measured (then renderer uses its
+  // calibrated default). Lets the star overlay match the live feed 1:1.
+  const [cameraFovDeg, setCameraFovDeg] = useState<number | null>(null);
+  // Live mirror of cameraFovDeg for pinch-calibration (synchronous reads in the
+  // gesture handler). Defaults to the renderer's calibrated fallback.
+  const cameraFovRef = useRef(33);
   const [searchTarget, setSearchTarget] = useState<{ name: string; azimuth: number; altitude: number } | null>(null);
   const [fov, setFov] = useState(AR_FOV);
   const fovRef = useRef(AR_FOV);
@@ -147,6 +160,7 @@ function AppContent() {
     deepSky: true, satellites: true, meteors: true, labels: true,
     horizon: true, altGrid: false, azGrid: false, eqGrid: false, milkyWay: true,
     atmosphere: true, ground: true, constellationBounds: false, redMode: false,
+    targetPointer: false,
   });
 
   // Reset FOV to default every time the sky view becomes active.
@@ -203,6 +217,53 @@ function AppContent() {
     }
   }, [pointing.ready, pointing.arAvailable, arMode]);
 
+  // Camera passthrough only makes sense in AR (orientation-driven) mode — if AR
+  // turns off (or sensors are unavailable), turn the camera overlay off too.
+  useEffect(() => {
+    if (!arMode && cameraMode) setCameraMode(false);
+  }, [arMode, cameraMode]);
+
+  // Toggle the live-camera star overlay. Requests camera permission in context
+  // and forces AR mode so the sky tracks where the phone is pointed.
+  const toggleCamera = useCallback(async () => {
+    if (cameraMode) { setCameraMode(false); return; }
+    let granted = cameraPerm?.granted ?? false;
+    if (!granted) {
+      const res = await requestCameraPerm();
+      granted = !!res?.granted;
+    }
+    if (!granted) {
+      Alert.alert(
+        'Camera access needed',
+        'To overlay the stars on your surroundings, enable camera access for Pie Matrix in Settings.',
+        [{ text: 'OK' }],
+      );
+      return;
+    }
+    if (!arMode) {
+      setArMode(true);
+      setFov(AR_FOV);
+      fovRef.current = AR_FOV;
+    }
+    setCameraMode(true);
+    // Measure the real camera FOV so the overlay matches the live preview.
+    //
+    // `videoFieldOfView` reflects the device's CURRENT active format. Read too
+    // early it returns the default full-sensor format (a wider FOV, ~74°);
+    // once CameraView starts it switches the shared AVCaptureDevice to a
+    // narrower preview format (~65°), which is what we actually want (matches
+    // Stellarium). So we don't stop at the first reading — we keep polling for
+    // a few seconds and use the latest value, so the post-configuration FOV
+    // wins. Pinch-calibration afterwards can still override it.
+    let tries = 0;
+    const measure = () => {
+      const f = getCameraMinDimFovDeg();
+      if (f != null) { setCameraFovDeg(f); cameraFovRef.current = f; }
+      if (tries++ < 14) setTimeout(measure, 250); // poll ~3.5s, always updating
+    };
+    measure();
+  }, [cameraMode, cameraPerm, requestCameraPerm, arMode]);
+
   const limMag = BORTLE_MAG[bortle] ?? 5.6;
 
   // --- View center ---
@@ -219,6 +280,9 @@ function AppContent() {
   const { handleTouchStart, handleTouchMove, handleTouchEnd } = useTouchGestures({
     arMode,
     fovRef,
+    cameraMode,
+    cameraFovRef,
+    onCameraFovChange: (f) => setCameraFovDeg(f),
     onFovChange: (newFov) => { fovRef.current = newFov; },
     onPan: (dAz, dAlt) => {
       manualAzRef.current = ((manualAzRef.current + dAz) % 360 + 360) % 360;
@@ -463,10 +527,11 @@ function AppContent() {
     );
   }
   if (currentScreen === 'calendar') return (<View style={{ flex: 1 }}><SkyCalendarScreen observer={skyRefs.coords.current} onClose={() => navigateTo('home')} /><BottomTabBar active="calendar" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
-  if (currentScreen === 'telescope') return (<View style={{ flex: 1 }}><TelescopeScreen observer={skyRefs.coords.current} onClose={() => navigateTo('home')} /><BottomTabBar active="" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
+  if (currentScreen === 'telescope') return (<View style={{ flex: 1 }}><TelescopeScreen observer={skyRefs.coords.current} onClose={() => navigateTo('home')} onOpenPolarScope={() => navigateTo('polarscope')} /><BottomTabBar active="" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
   if (currentScreen === 'product' && selectedProductHandle) return <ProductDetailScreen handle={selectedProductHandle} onClose={goBack} />;
   if (currentScreen === 'category' && selectedCategory) return <CategoryScreen collectionHandle={selectedCategory.handle} title={selectedCategory.title} onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} />;
   if (currentScreen === 'shop') return (<View style={{ flex: 1 }}><ShopScreen onClose={() => navigateTo('home')} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} /><BottomTabBar active="shop" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
+  if (currentScreen === 'polarscope') return <PolarScopeScreen onClose={goBack} observerLongitude={skyRefs.coords.current.longitude} />;
   if (currentScreen === 'support') return <SupportScreen onClose={goBack} />;
   if (currentScreen === 'feedback') return <FeedbackScreen onClose={goBack} />;
   if (currentScreen === 'events') return <EventsScreen onClose={goBack} />;
@@ -477,7 +542,7 @@ function AppContent() {
   if (sky.error) return <View style={s.center}><Text style={s.err}>{sky.error}</Text></View>;
   if (!sky.ready) return <View style={s.center}><Star1 size={48} color="#d4c5a0" variant="Bulk" /><Text style={s.loadSub}>{sky.loadMsg}</Text></View>;
   if (!pointing.ready) return <View style={s.center}><SkyIcon name="satellite" size={48} color="#d4c5a0" /><Text style={s.loadSub}>Waiting for sensors…</Text></View>;
-  if (showSettings) return <SettingsPanel bortle={bortle} setBortle={b => setBortle(Math.max(1, Math.min(9, b)))} show={show} toggle={toggle} groundId={groundId} setGroundId={setGroundId} onClose={() => setShowSettings(false)} />;
+  if (showSettings) return <SettingsPanel bortle={bortle} setBortle={b => setBortle(Math.max(1, Math.min(9, b)))} show={show} toggle={toggle} groundId={groundId} setGroundId={setGroundId} onClose={() => setShowSettings(false)} onOpenPolarScope={() => { setShowSettings(false); navigateTo('polarscope'); }} />;
 
   // ─── Sky View ────────────────────────────────────────────────────────────────
 
@@ -485,6 +550,10 @@ function AppContent() {
 
   return (
     <View style={s.root}>
+      {/* Live camera feed behind the (transparent) sky renderer for AR overlay */}
+      {cameraMode && cameraPerm?.granted && (
+        <CameraView style={StyleSheet.absoluteFillObject} facing="back" />
+      )}
       {/* Three.js sky renderer */}
       <SkyRenderer
         azimuth={viewCenter.azimuth}
@@ -517,6 +586,8 @@ function AppContent() {
         observerLatitude={skyRefs.coords.current.latitude}
         limitingMag={limMag}
         redMode={show.redMode ?? false}
+        cameraMode={cameraMode}
+        cameraFovDeg={cameraFovDeg ?? undefined}
         groundId={groundId}
         selectedObjectRef={selectedObjectRef}
       />
@@ -529,6 +600,22 @@ function AppContent() {
         onTouchEnd={handleTouchEnd}
         pointerEvents="box-only"
       />
+
+      {/* Center viewfinder / target reticle — marks the exact screen centre so
+          you can precisely aim the phone at an object. Non-interactive. */}
+      {show.targetPointer && (
+      <View pointerEvents="none" style={s.reticleWrap}>
+        <View style={s.reticleBox}>
+          <View style={[s.reticleRing, show.redMode && { borderColor: 'rgba(255,68,68,0.7)' }]}>
+            <View style={[s.reticleDot, show.redMode && { backgroundColor: '#ff4444' }]} />
+          </View>
+          <View style={[s.reticleTick, s.reticleTickTop, show.redMode && { backgroundColor: 'rgba(255,68,68,0.8)' }]} />
+          <View style={[s.reticleTick, s.reticleTickBottom, show.redMode && { backgroundColor: 'rgba(255,68,68,0.8)' }]} />
+          <View style={[s.reticleTick, s.reticleTickLeft, show.redMode && { backgroundColor: 'rgba(255,68,68,0.8)' }]} />
+          <View style={[s.reticleTick, s.reticleTickRight, show.redMode && { backgroundColor: 'rgba(255,68,68,0.8)' }]} />
+        </View>
+      </View>
+      )}
 
       {/* Red night mode — handled entirely in GL renderer */}
 
@@ -615,7 +702,7 @@ function AppContent() {
             <View style={s.infoGroup}>
               <Maximize4 size={16} color={show.redMode ? '#ff4444' : 'rgba(255,255,255,0.5)'} variant="Bulk" />
               <View>
-                <Text style={[s.infoVal, show.redMode && { color: '#ff4444' }]}>FOV {fov < 10 ? fov.toFixed(1) : Math.round(fov)}°</Text>
+                <Text style={[s.infoVal, show.redMode && { color: '#ff4444' }]}>FOV {(cameraMode && cameraFovDeg != null ? cameraFovDeg : fov).toFixed(1)}°</Text>
                 <Text style={[s.infoSub, show.redMode && { color: '#991111' }]}>mag {limMag.toFixed(1)}</Text>
               </View>
             </View>
@@ -646,6 +733,11 @@ function AppContent() {
         <TouchableOpacity style={s.fabBtn} onPress={() => setShowSettings(true)}>
           <Setting4 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Bulk" />
         </TouchableOpacity>
+        {pointing.arAvailable !== false && (
+        <TouchableOpacity style={[s.fabBtn, cameraMode && s.fabActive]} onPress={toggleCamera}>
+          <Camera size={20} color={show.redMode ? '#ff4444' : (cameraMode ? '#22c55e' : '#fff')} variant="Bulk" />
+        </TouchableOpacity>
+        )}
         {pointing.arAvailable !== false && (
         <TouchableOpacity
           style={[s.fabBtn, !arMode && s.fabActive]}
@@ -1340,6 +1432,16 @@ const s = StyleSheet.create({
   pillDim: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: 'Poppins-Light' },
   loadingPill: { backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)' },
   loadingText: { color: 'rgba(255,255,255,0.6)', fontSize: 10, fontWeight: '600' },
+  // Center viewfinder / target reticle
+  reticleWrap: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  reticleBox: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  reticleRing: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.55)', alignItems: 'center', justifyContent: 'center', backgroundColor: 'transparent' },
+  reticleDot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: 'rgba(255,255,255,0.9)' },
+  reticleTick: { position: 'absolute', backgroundColor: 'rgba(255,255,255,0.55)' },
+  reticleTickTop: { width: 1.5, height: 6, top: 1, left: 23.25 },
+  reticleTickBottom: { width: 1.5, height: 6, bottom: 1, left: 23.25 },
+  reticleTickLeft: { width: 6, height: 1.5, left: 1, top: 23.25 },
+  reticleTickRight: { width: 6, height: 1.5, right: 1, top: 23.25 },
   modePill: { backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   modePillManual: { backgroundColor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.15)' },
   modeText: { color: 'rgba(255,255,255,0.8)', fontSize: 10, fontWeight: '700' },

@@ -20,7 +20,7 @@ interface ShowState {
   planets: boolean; moon: boolean; sun: boolean; constellations: boolean;
   deepSky: boolean; satellites: boolean; meteors: boolean; labels: boolean;
   horizon: boolean; altGrid: boolean; azGrid: boolean; eqGrid: boolean; milkyWay: boolean;
-  atmosphere: boolean; ground: boolean; redMode?: boolean;
+  atmosphere: boolean; ground: boolean; redMode?: boolean; targetPointer?: boolean;
 }
 
 interface Props {
@@ -31,6 +31,7 @@ interface Props {
   groundId: string;
   setGroundId: (id: string) => void;
   onClose: () => void;
+  onOpenPolarScope?: () => void;
 }
 
 type ToggleKey = keyof ShowState;
@@ -133,6 +134,13 @@ const SECTIONS: Section[] = [
         icon: <TextIcon size={18} color="#60a5fa" variant="Bulk" />,
       },
       {
+        key: 'targetPointer',
+        label: 'Target Pointer',
+        desc: 'Show a center crosshair to aim at objects',
+        info: 'Places a small viewfinder reticle at the exact center of the screen so you can precisely aim the phone at a star, planet, or deep-sky object. Turn it off for an uncluttered view.',
+        icon: <Discover size={18} color="#22d3ee" variant="Bulk" />,
+      },
+      {
         key: 'horizon',
         label: 'Horizon',
         desc: 'Draw the horizon line and compass directions',
@@ -190,7 +198,7 @@ const SECTIONS: Section[] = [
   },
 ];
 
-export default function SettingsPanel({ bortle, setBortle, show, toggle, groundId, setGroundId, onClose }: Props) {
+export default function SettingsPanel({ bortle, setBortle, show, toggle, groundId, setGroundId, onClose, onOpenPolarScope }: Props) {
   const [info, setInfo] = useState<ToggleDef | null>(null);
   const bColor = BORTLE_COLORS[bortle - 1] ?? '#f59e0b';
   const limMag = BORTLE_MAG[bortle] ?? 5.6;
@@ -273,6 +281,23 @@ export default function SettingsPanel({ bortle, setBortle, show, toggle, groundI
             })}
           </ScrollView>
         </View>
+
+        {/* Tools */}
+        {onOpenPolarScope && (
+          <>
+            <Text style={st.section}>Tools</Text>
+            <View style={st.card}>
+              <TouchableOpacity style={st.toolRow} onPress={onOpenPolarScope} activeOpacity={0.7}>
+                <View style={st.iconWrap}><Discover size={18} color="#d4c5a0" variant="Bulk" /></View>
+                <View style={{ flex: 1 }}>
+                  <Text style={st.toolLabel}>Polar Scope</Text>
+                  <Text style={st.toolDesc}>Align your mount using Polaris</Text>
+                </View>
+                <InfoCircle size={18} color="rgba(255,255,255,0.25)" variant="Linear" style={{ transform: [{ rotate: '180deg' }] }} />
+              </TouchableOpacity>
+            </View>
+          </>
+        )}
 
         {/* All toggle sections — shown at once, no advanced gate */}
         {SECTIONS.map((section) => (
@@ -369,6 +394,9 @@ const st = StyleSheet.create({
   groundNameActive: { color: '#d4c5a0' },
 
   toggleRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, paddingHorizontal: 16, gap: 12 },
+  toolRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16, gap: 12 },
+  toolLabel: { color: 'rgba(255,255,255,0.95)', fontSize: 15, fontWeight: '600' },
+  toolDesc: { color: 'rgba(255,255,255,0.4)', fontSize: 12, marginTop: 2 },
   toggleBorder: { borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.04)' },
   iconWrap: { width: 28, height: 28, borderRadius: 8, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' },
   toggleTextWrap: { flex: 1 },

@@ -115,10 +115,25 @@ export function useSkyEngine(bortle: number) {
       try {
         setLoadMsg('Getting location…');
         let coords: GeographicCoordinates = { latitude: 0, longitude: 0 };
-        const { status } = await Location.requestForegroundPermissionsAsync();
-        if (status === 'granted') {
-          const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-          coords = { latitude: loc.coords.latitude, longitude: loc.coords.longitude };
+        try {
+          const { status } = await Location.requestForegroundPermissionsAsync();
+          if (status === 'granted') {
+            // Fast path: last-known position returns immediately (may be null).
+            const last = await Location.getLastKnownPositionAsync().catch(() => null);
+            if (last) coords = { latitude: last.coords.latitude, longitude: last.coords.longitude };
+            // Refine with a fresh fix, but NEVER block init indefinitely — a GPS
+            // fix can hang forever indoors or on a simulator with no location set,
+            // which would leave the app stuck on the loading screen. Cap the wait.
+            const fresh = await Promise.race([
+              Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }).catch(() => null),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 6000)),
+            ]);
+            if (fresh && 'coords' in fresh) {
+              coords = { latitude: fresh.coords.latitude, longitude: fresh.coords.longitude };
+            }
+          }
+        } catch {
+          // Permission / location errors are non-fatal — fall back to defaults.
         }
         coordsRef.current = coords;
 

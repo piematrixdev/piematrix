@@ -34,6 +34,7 @@ const F_TITLE = 'Poppins-ExtraBold';
 interface Props {
   observer: GeographicCoordinates;
   onClose: () => void;
+  onOpenPolarScope?: () => void;
 }
 
 function parseSpecsFromProduct(product: Product): TelescopeSpec | null {
@@ -74,7 +75,7 @@ function parseSpecsFromProduct(product: Product): TelescopeSpec | null {
   return { name: product.title, type, aperture, focalLength, eyepieceFl: 25, eyepieceAfov: 52, barlow: 1, mount: type === 'reflector' && aperture >= 200 ? 'dobsonian' : 'equatorial' };
 }
 
-export default function TelescopeScreen({ observer, onClose }: Props) {
+export default function TelescopeScreen({ observer, onClose, onOpenPolarScope }: Props) {
   const [shopProducts, setShopProducts] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [spec, setSpec] = useState<TelescopeSpec>(TELESCOPE_PRESETS['beginner-reflector']);
@@ -141,6 +142,18 @@ export default function TelescopeScreen({ observer, onClose }: Props) {
           <Setting4 size={20} color="rgba(255,255,255,0.6)" variant="Bulk" />
         </TouchableOpacity>
       </View>
+
+      {/* Polar Scope tool entry */}
+      {onOpenPolarScope && (
+        <TouchableOpacity onPress={onOpenPolarScope} style={s.polarBtn} activeOpacity={0.8}>
+          <Discover size={18} color="#d4c5a0" variant="Bulk" />
+          <View style={{ flex: 1 }}>
+            <Text style={s.polarTitle}>Polar Scope</Text>
+            <Text style={s.polarSub}>Align your mount using Polaris</Text>
+          </View>
+          <ArrowLeft2 size={18} color="rgba(255,255,255,0.4)" variant="Linear" style={{ transform: [{ rotate: '180deg' }] }} />
+        </TouchableOpacity>
+      )}
 
       <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
 
@@ -429,6 +442,9 @@ const s = StyleSheet.create({
   headerTitle: { color: '#fff', fontSize: 22, fontFamily: F_TITLE },
   headerSub: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: F_LIGHT, marginTop: 2 },
   settingsBtn: { padding: 8 },
+  polarBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, marginHorizontal: 20, marginBottom: 6, paddingVertical: 12, paddingHorizontal: 14, borderRadius: 14, backgroundColor: 'rgba(212,197,160,0.08)', borderWidth: 1, borderColor: 'rgba(212,197,160,0.18)' },
+  polarTitle: { color: '#fff', fontSize: 15, fontFamily: F_SEMIBOLD },
+  polarSub: { color: 'rgba(255,255,255,0.45)', fontSize: 12, fontFamily: F_LIGHT, marginTop: 1 },
   scroll: { paddingBottom: 140, paddingHorizontal: 20 },
 
   // Section labels
