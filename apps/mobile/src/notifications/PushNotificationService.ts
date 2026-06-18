@@ -27,7 +27,7 @@ Notifications.setNotificationHandler({
  * Register for push notifications and store the token in Supabase.
  * Call this after the user is authenticated.
  */
-export async function registerForPushNotifications(userId: string): Promise<string | null> {
+export async function registerForPushNotifications(userId: string, prompt: boolean = false): Promise<string | null> {
   console.log('[Push] Starting registration for user:', userId);
 
   if (!Device.isDevice) {
@@ -35,12 +35,18 @@ export async function registerForPushNotifications(userId: string): Promise<stri
     return null;
   }
 
-  // Check/request permission
+  // Check permission. Only ever PROMPT when the user is explicitly opting in
+  // (prompt=true). On the silent auth path we register a token only if the
+  // user has already granted notifications — never trigger a prompt on launch.
   const { status: existingStatus } = await Notifications.getPermissionsAsync();
   console.log('[Push] Existing permission status:', existingStatus);
   let finalStatus = existingStatus;
 
   if (existingStatus !== 'granted') {
+    if (!prompt) {
+      console.log('[Push] Not granted and not opting in — skipping (no prompt)');
+      return null;
+    }
     const { status } = await Notifications.requestPermissionsAsync();
     finalStatus = status;
     console.log('[Push] Requested permission, got:', status);

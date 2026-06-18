@@ -402,7 +402,7 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
                 </TouchableOpacity>
               ))}
               {tonightData.deepSky.slice(0, 4).map(d => (
-                <TouchableOpacity key={d.id} style={s.highlightCard} activeOpacity={0.8} onPress={() => setDetailObject({ type: 'Deep Sky', ...d })}>
+                <TouchableOpacity key={d.id} style={s.highlightCard} activeOpacity={0.8} onPress={() => setDetailObject({ ...d, type: 'Deep Sky' })}>
                   <View style={[s.highlightIcon, { backgroundColor: 'rgba(201,184,150,0.12)' }]}>
                     <SkyIcon name="orbit" size={20} color="#c9b896" />
                   </View>
@@ -638,7 +638,7 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
           </View>
           <View style={{ marginTop: 24, alignItems: 'center', width: '100%' }}>
             <Text style={s.footerBrand} onLongPress={() => onNavigate('game')} suppressHighlighting>{t('home.footer.brand', 'Pie Matrix')}</Text>
-            <Text style={s.footerVer}>Beta v{APP_VERSION}</Text>
+            <Text style={s.footerVer}>v{APP_VERSION}</Text>
           </View>
         </View>
       </ScrollView>

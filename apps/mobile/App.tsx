@@ -79,12 +79,14 @@ function AppContent() {
   const { user } = useAuth();
   useEffect(() => {
     if (!user?.id) return;
-    // Schedule daily sky notification (only once — AuthContext handles token registration)
-    scheduleDailySkyNotification(19, 0);
-
-    // Schedule event reminders for upcoming sky events
+    // Only (re)schedule local notifications if the user has ALREADY granted
+    // notification permission — never trigger a permission prompt on launch.
+    // The opt-in prompt happens in Profile when the user enables alerts.
     (async () => {
       try {
+        const { status } = await Notifications.getPermissionsAsync();
+        if (status !== 'granted') return;
+        scheduleDailySkyNotification(19, 0);
         const { fetchUpcomingEvents } = require('./src/skyEvents');
         const events = await fetchUpcomingEvents();
         if (events && events.length > 0) {

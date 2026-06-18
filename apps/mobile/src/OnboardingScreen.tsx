@@ -14,14 +14,13 @@ import * as AppleAuthentication from 'expo-apple-authentication';
 import * as WebBrowser from 'expo-web-browser';
 import * as AuthSession from 'expo-auth-session';
 import {
-  Star1, Moon, Sun1, Global, Camera, Telescope, Magicpen,
+  Star1, Moon, Sun1, Global, Camera, Magicpen,
   Radar, Eye, ArrowRight2, TickCircle, Gallery, Call, Sms,
 } from 'iconsax-react-native';
 import { useAuth } from './auth/AuthContext';
 import { useContent } from './content/ContentContext';
 import { supabase } from './auth/supabaseClient';
 import { fetchCollectionProducts, Product } from './shopify';
-import { requestAllPermissions } from './permissions';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -136,20 +135,22 @@ export default function OnboardingScreen({ onComplete }: Props) {
     }
   };
 
-  // Steps: 0=Welcome, 1=SignUp, 2=Permissions, 3=Interests, 4=Level, 5=Gear, 6=Confirmation
-  // If already signed in, skip step 1 (sign-up) and step 6 (confirmation)
+  // Steps: 0=Welcome, 1=SignUp, 2=Interests, 3=Level, 4=Gear, 5=Confirmation
+  // Permissions are no longer requested here — each is asked for in context
+  // (location/motion when the sky view opens, notifications when the user opts
+  // in, photos when picking an avatar). If already signed in, skip sign-up (1)
+  // and confirmation (5).
   const renderStep = () => {
     switch (step) {
       case 0: return <WelcomeStep onNext={nextStep} />;
       case 1:
-        // If already signed in, skip to permissions
+        // If already signed in, skip to interests
         if (isSignedIn) { nextStep(); return null; }
         return <SignUpStep onNext={nextStep} />;
-      case 2: return <PermissionsStep onNext={nextStep} />;
-      case 3: return <InterestsStep interests={interests} onToggle={toggleInterest} onNext={nextStep} />;
-      case 4: return <LevelStep level={level} onSelect={setLevel} onNext={nextStep} />;
-      case 5: return <GearStep products={products} selected={selectedGear} onToggle={toggleGear} customGear={customGear} onCustomChange={setCustomGear} onNext={() => { handleFinish(); }} />;
-      case 6:
+      case 2: return <InterestsStep interests={interests} onToggle={toggleInterest} onNext={nextStep} />;
+      case 3: return <LevelStep level={level} onSelect={setLevel} onNext={nextStep} />;
+      case 4: return <GearStep products={products} selected={selectedGear} onToggle={toggleGear} customGear={customGear} onCustomChange={setCustomGear} onNext={() => { handleFinish(); }} />;
+      case 5:
         // If already signed in, no confirmation needed — finish
         if (isSignedIn) { onComplete(); return null; }
         return <ConfirmEmailStep onDone={onComplete} />;
@@ -157,12 +158,12 @@ export default function OnboardingScreen({ onComplete }: Props) {
     }
   };
 
-  const totalSteps = isSignedIn ? 5 : 6;
+  const totalSteps = isSignedIn ? 4 : 5;
   const displayStep = isSignedIn ? Math.max(0, step - 1) : step;
 
   return (
     <View style={s.root}>
-      <LinearGradient colors={['#030308', '#0a0a1a', '#030308']} style={StyleSheet.absoluteFill} />
+      <LinearGradient colors={['#030308', '#0a0a1a', '#030308']} style={StyleSheet.absoluteFillObject} />
 
       {/* Progress dots */}
       {step > 0 && (
@@ -192,7 +193,9 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   return (
     <View style={s.stepCenter}>
       <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
-        <Image source={require('../assets/pie-logo.png')} style={s.welcomeLogo} />
+        <View style={s.welcomeLogo}>
+          <Image source={require('../assets/pie-logo.png')} style={s.welcomeLogoImg} />
+        </View>
       </Animated.View>
       <Text style={s.welcomeTitle}>Welcome to Pie Matrix</Text>
       <Text style={s.welcomeSub}>Your personal window to the universe.{'\n'}Let's set up your stargazing profile.</Text>
@@ -451,56 +454,14 @@ function SignUpStep({ onNext }: { onNext: () => void }) {
           </View>
 
           <Text style={s.termsText}>
-            By continuing, you agree to our Terms of Service and Privacy Policy
+            By continuing, you agree to our{' '}
+            <Text style={s.termsLink} onPress={() => WebBrowser.openBrowserAsync('https://thepiematrix.com/pages/terms-and-conditions')}>Terms of Service</Text>
+            {' '}and{' '}
+            <Text style={s.termsLink} onPress={() => WebBrowser.openBrowserAsync('https://thepiematrix.com/pages/privacy-policy')}>Privacy Policy</Text>
           </Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
-  );
-}
-
-function PermissionsStep({ onNext }: { onNext: () => void }) {
-  const { t } = useContent();
-  const [requesting, setRequesting] = useState(false);
-  const [done, setDone] = useState(false);
-
-  const handleEnable = async () => {
-    setRequesting(true);
-    await requestAllPermissions();
-    setRequesting(false);
-    setDone(true);
-    setTimeout(onNext, 500);
-  };
-
-  const PERMS = [
-    { icon: <Radar size={22} color="#d4c5a0" variant="Bulk" />, title: t('onboarding.perm.motion_title', 'Motion & Location'), desc: t('onboarding.perm.motion_desc', 'Point your phone at the sky to identify what you see') },
-    { icon: <Star1 size={22} color="#d4c5a0" variant="Bulk" />, title: t('onboarding.perm.notif_title', 'Notifications'), desc: t('onboarding.perm.notif_desc', 'Nightly sky alerts and event reminders') },
-    { icon: <Gallery size={22} color="#d4c5a0" variant="Bulk" />, title: t('onboarding.perm.photos_title', 'Photos'), desc: t('onboarding.perm.photos_desc', 'Set a profile photo (optional)') },
-  ];
-
-  return (
-    <View style={s.step}>
-      <Text style={s.stepTitle}>{t('onboarding.perm.title', 'Set up your experience')}</Text>
-      <Text style={s.stepSub}>{t('onboarding.perm.subtitle', "To bring the night sky to life, Pie Matrix can use a few device features. You're always in control — choose what feels right for you.")}</Text>
-
-      <View style={{ gap: 12, marginTop: 20, flex: 1 }}>
-        {PERMS.map((p, i) => (
-          <View key={i} style={s.permCard}>
-            <View style={s.permIcon}>{p.icon}</View>
-            <View style={{ flex: 1 }}>
-              <Text style={s.permTitle}>{p.title}</Text>
-              <Text style={s.permDesc}>{p.desc}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-
-      <TouchableOpacity style={[s.primaryBtn, requesting && s.btnDisabled]} onPress={handleEnable} disabled={requesting || done}>
-        <Text style={s.primaryBtnText}>{done ? t('onboarding.perm.cta_done', 'All set') : requesting ? t('onboarding.perm.cta_busy', 'Requesting…') : t('onboarding.perm.cta', 'Continue')}</Text>
-        {!requesting && !done && <ArrowRight2 size={18} color="#030308" variant="Bold" />}
-        {done && <TickCircle size={18} color="#030308" variant="Bold" />}
-      </TouchableOpacity>
-    </View>
   );
 }
 
@@ -652,7 +613,8 @@ const s = StyleSheet.create({
   stepSub: { color: 'rgba(255,255,255,0.5)', fontSize: 14, fontFamily: F_REG, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
 
   // Welcome
-  welcomeLogo: { width: 90, height: 90, borderRadius: 22, backgroundColor: '#fff', padding: 12, resizeMode: 'contain' } as any,
+  welcomeLogo: { width: 90, height: 90, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' } as any,
+  welcomeLogoImg: { width: 58, height: 58, resizeMode: 'contain' } as any,
   welcomeTitle: { color: '#fff', fontSize: 28, fontFamily: 'Poppins-Black', marginTop: 24, textAlign: 'center' },
   welcomeSub: { color: 'rgba(255,255,255,0.5)', fontSize: 15, fontFamily: F_LIGHT, textAlign: 'center', marginTop: 12, lineHeight: 22 },
 
@@ -683,6 +645,9 @@ const s = StyleSheet.create({
   termsText: {
     color: 'rgba(255,255,255,0.2)', fontSize: 11, fontFamily: F_LIGHT,
     textAlign: 'center', lineHeight: 17, marginTop: 8,
+  },
+  termsLink: {
+    color: 'rgba(212,197,160,0.85)', textDecorationLine: 'underline',
   },
 
   // Interests

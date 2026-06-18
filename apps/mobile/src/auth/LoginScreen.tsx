@@ -193,7 +193,9 @@ export default function LoginScreen() {
 
       {/* Top section — branding */}
       <View style={s.topSection}>
-        <Image source={require('../../assets/pie-logo.png')} style={s.logo} />
+        <View style={s.logoBox}>
+          <Image source={require('../../assets/pie-logo.png')} style={s.logoImg} />
+        </View>
         <Text style={s.appName}>{t('brand.name', 'Pie Matrix')}</Text>
         <Text style={s.tagline}>{t('brand.tagline', 'Your window to the cosmos')}</Text>
       </View>
@@ -270,7 +272,10 @@ export default function LoginScreen() {
 
         {/* Terms */}
         <Text style={s.terms}>
-          By continuing, you agree to our Terms of Service{'\n'}and Privacy Policy
+          By continuing, you agree to our{' '}
+          <Text style={s.termsLink} onPress={() => WebBrowser.openBrowserAsync('https://thepiematrix.com/pages/terms-and-conditions')}>Terms of Service</Text>
+          {'\n'}and{' '}
+          <Text style={s.termsLink} onPress={() => WebBrowser.openBrowserAsync('https://thepiematrix.com/pages/privacy-policy')}>Privacy Policy</Text>
         </Text>
 
         <Text style={s.pieBrand}>Pie Matrix</Text>
@@ -287,10 +292,11 @@ const s = StyleSheet.create({
   topSection: {
     flex: 1, justifyContent: 'center', alignItems: 'center', paddingTop: 60,
   },
-  logo: {
+  logoBox: {
     width: 72, height: 72, borderRadius: 20, backgroundColor: '#fff',
-    resizeMode: 'contain', marginBottom: 20,
+    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
   },
+  logoImg: { width: 46, height: 46, resizeMode: 'contain' },
   appName: {
     color: '#fff', fontSize: 36, fontFamily: F_TITLE, letterSpacing: -1,
   },
@@ -326,6 +332,9 @@ const s = StyleSheet.create({
   terms: {
     color: 'rgba(255,255,255,0.2)', fontSize: 11, fontFamily: F_LIGHT,
     textAlign: 'center', marginTop: 24, lineHeight: 17,
+  },
+  termsLink: {
+    color: 'rgba(212,197,160,0.85)', textDecorationLine: 'underline',
   },
 
   // Divider

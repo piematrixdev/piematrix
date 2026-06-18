@@ -7,7 +7,7 @@ import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
   StatusBar, Alert, TextInput, RefreshControl,
 } from 'react-native';
-import { Image, prefetch } from 'expo-image';
+import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as ImagePicker from 'expo-image-picker';
 import {
@@ -17,6 +17,7 @@ import {
 import { useAuth } from './auth/AuthContext';
 import { supabase } from './auth/supabaseClient';
 import SkyIcon from './components/SkyIcon';
+import Constants from 'expo-constants';
 
 const F_LIGHT = 'Poppins-Light';
 const F_REG = 'Poppins-Regular';
@@ -65,7 +66,7 @@ export default function ProfileScreen({ onClose }: Props) {
       .single();
     if (data) {
       setProfile(data);
-      if (data.avatar_url) { setAvatarUrl(data.avatar_url); prefetch(data.avatar_url); }
+      if (data.avatar_url) { setAvatarUrl(data.avatar_url); Image.prefetch(data.avatar_url); }
       // Respect DB value: if explicitly false, turn off. If null/true, keep on.
       setNotifs(data.email_notifications !== false);
     }
@@ -120,19 +121,34 @@ export default function ProfileScreen({ onClose }: Props) {
 
   const toggleNotifs = async () => {
     const val = !notifs;
-    setNotifs(val);
-    // Save preference to DB
-    await supabase.from('user_profiles').update({ email_notifications: val }).eq('id', user?.id);
-    // Schedule or cancel push notifications
-    try {
-      if (val) {
-        const { scheduleDailySkyNotification } = require('./notifications/PushNotificationService');
-        await scheduleDailySkyNotification(19, 0);
-      } else {
+    if (val) {
+      // Opt-in: request notification permission now, in context. If the user
+      // declines, leave the toggle off and point them to Settings.
+      const Notifications = require('expo-notifications');
+      const { status } = await Notifications.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Notifications are off',
+          'To get nightly sky alerts, enable notifications for Pie Matrix in your device Settings.',
+          [{ text: 'OK' }],
+        );
+        return; // keep the toggle off
+      }
+      setNotifs(true);
+      await supabase.from('user_profiles').update({ email_notifications: true }).eq('id', user?.id);
+      try {
+        const Push = require('./notifications/PushNotificationService');
+        await Push.scheduleDailySkyNotification(19, 0);
+        if (user?.id) await Push.registerForPushNotifications(user.id, true);
+      } catch {}
+    } else {
+      setNotifs(false);
+      await supabase.from('user_profiles').update({ email_notifications: false }).eq('id', user?.id);
+      try {
         const { cancelAllNotifications } = require('./notifications/PushNotificationService');
         await cancelAllNotifications();
-      }
-    } catch {}
+      } catch {}
+    }
   };
 
   const logout = () => {
@@ -303,7 +319,7 @@ export default function ProfileScreen({ onClose }: Props) {
           <Text style={s.sectionLabel}>ABOUT</Text>
           <View style={s.card}>
             <View style={s.infoRow}><Text style={s.infoLabel}>Member since</Text><Text style={s.infoVal}>{memberSince}</Text></View>
-            <View style={s.infoRow}><Text style={s.infoLabel}>Version</Text><Text style={s.infoVal}>Beta v1.2</Text></View>
+            <View style={s.infoRow}><Text style={s.infoLabel}>Version</Text><Text style={s.infoVal}>v{Constants.nativeAppVersion ?? '1.0'}</Text></View>
             <View style={[s.infoRow, { borderBottomWidth: 0 }]}><Text style={s.infoLabel}>Made by</Text><Text style={s.infoVal}>Pie Matrix</Text></View>
           </View>
         </View>
