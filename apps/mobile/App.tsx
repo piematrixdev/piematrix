@@ -12,7 +12,7 @@ import ResetPasswordScreen from './src/auth/ResetPasswordScreen';
 import { supabase as authSupabase } from './src/auth/supabaseClient';
 import {
   Setting4, Clock, Building,
-  ArrowLeft2, Gps, FingerCricle,
+  ArrowLeft2,
   Star1, Radar, SearchNormal1, Moon, Heart, Maximize4, LocationDiscover, Eye,
   Home2, ShoppingBag, Calendar, ProfileCircle, Discover,
 } from 'iconsax-react-native';
@@ -124,6 +124,10 @@ function AppContent() {
   const [showTimePanel, setShowTimePanel] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [calibratingToast, setCalibratingToast] = useState(false);
+  // One-time gentle hint, shown when the sky view opens, pointing at the
+  // compass button so the user knows how to re-align if the sky looks off.
+  const [showCompassHint, setShowCompassHint] = useState(false);
+  const compassPulse = useRef(new Animated.Value(0)).current;
   const [searchTarget, setSearchTarget] = useState<{ name: string; azimuth: number; altitude: number } | null>(null);
   const [fov, setFov] = useState(AR_FOV);
   const fovRef = useRef(AR_FOV);
@@ -152,6 +156,33 @@ function AppContent() {
       setFov(target);
       fovRef.current = target;
     }
+  }, [currentScreen, arMode]);
+
+  // When the sky view opens in AR mode, briefly highlight the compass button
+  // (pulse + callout) so the user knows they can tap it to re-align the sky if
+  // it looks off. Auto-dismisses after a few seconds.
+  useEffect(() => {
+    if (currentScreen !== 'skywatch' || !arMode) {
+      setShowCompassHint(false);
+      compassPulse.stopAnimation();
+      compassPulse.setValue(0);
+      return;
+    }
+    setShowCompassHint(true);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(compassPulse, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(compassPulse, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    const hide = setTimeout(() => setShowCompassHint(false), 6000);
+    return () => {
+      loop.stop();
+      compassPulse.stopAnimation();
+      compassPulse.setValue(0);
+      clearTimeout(hide);
+    };
   }, [currentScreen, arMode]);
   const toggle = (k: keyof typeof show) => setShow(p => ({ ...p, [k]: !p[k] }));
 
@@ -522,14 +553,40 @@ function AppContent() {
             redMode={show.redMode}
           />
         </View>
-        <TouchableOpacity onPress={() => { recalibrate(); setCalibratingToast(true); setTimeout(() => setCalibratingToast(false), 2500); }}>
-          <GlassCard style={s.backBtn} intensity={20} borderRadius={19}>
-            <View style={s.backBtnInner}>
-              <SkyIcon name="compass" size={20} color="#fff" />
-            </View>
-          </GlassCard>
+        <TouchableOpacity onPress={() => { recalibrate(); setCalibratingToast(true); setShowCompassHint(false); setTimeout(() => setCalibratingToast(false), 2500); }}>
+          <View>
+            {/* Pulsing attention ring (only while the open-hint is active) */}
+            {showCompassHint && (
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  s.compassPulse,
+                  {
+                    opacity: compassPulse.interpolate({ inputRange: [0, 1], outputRange: [0.15, 0.6] }),
+                    transform: [{ scale: compassPulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.5] }) }],
+                  },
+                ]}
+              />
+            )}
+            <GlassCard style={s.backBtn} intensity={20} borderRadius={19}>
+              <View style={s.backBtnInner}>
+                <SkyIcon name="compass" size={20} color={showCompassHint ? '#d4c5a0' : '#fff'} />
+              </View>
+            </GlassCard>
+          </View>
         </TouchableOpacity>
       </View>
+
+      {/* Compass alignment hint — gentle one-time pointer to recalibrate */}
+      {showCompassHint && (
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => { recalibrate(); setCalibratingToast(true); setShowCompassHint(false); setTimeout(() => setCalibratingToast(false), 2500); }}
+          style={s.compassHint}
+        >
+          <Text style={s.compassHintText}>Sky looks off? Tap the compass to re-align</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Calibrating toast */}
       {calibratingToast && (
@@ -612,7 +669,7 @@ function AppContent() {
             });
           }}
         >
-          {arMode ? <Gps size={20} color={show.redMode ? '#ff4444' : '#22c55e'} variant="Bulk" /> : <FingerCricle size={20} color={show.redMode ? '#ff4444' : '#d4c5a0'} variant="Bulk" />}
+          {arMode ? <SkyIcon name="ar-view" size={22} color={show.redMode ? '#ff4444' : '#22c55e'} /> : <SkyIcon name="ar-device" size={22} color={show.redMode ? '#ff4444' : '#d4c5a0'} />}
         </TouchableOpacity>
         )}
       </View>
@@ -1263,6 +1320,18 @@ const s = StyleSheet.create({
   // Calibrating toast
   calibToast: { position: 'absolute', top: 100, left: 0, right: 0, alignItems: 'center' },
   calibToastText: { color: '#d4c5a0', fontSize: 13, fontFamily: 'Poppins-Regular', backgroundColor: 'rgba(10,10,20,0.85)', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(212,197,160,0.2)' },
+
+  // Compass alignment hint (shown briefly when the sky view opens)
+  compassPulse: {
+    position: 'absolute', top: 0, left: 0, width: 38, height: 38, borderRadius: 19,
+    borderWidth: 2, borderColor: '#d4c5a0', backgroundColor: 'rgba(212,197,160,0.18)',
+  },
+  compassHint: {
+    position: 'absolute', top: 100, right: 14, maxWidth: 230,
+    backgroundColor: 'rgba(10,10,20,0.88)', paddingHorizontal: 14, paddingVertical: 9,
+    borderRadius: 14, borderWidth: 1, borderColor: 'rgba(212,197,160,0.3)',
+  },
+  compassHintText: { color: '#d4c5a0', fontSize: 12.5, fontFamily: 'Poppins-Regular', textAlign: 'right' },
   pill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 6, gap: 5 },
   pillBold: { color: '#fff', fontSize: 16, fontWeight: '700', fontFamily: 'Poppins-Bold' },
   pillLight: { color: 'rgba(255,255,255,0.7)', fontSize: 14, fontFamily: 'Poppins-Light' },

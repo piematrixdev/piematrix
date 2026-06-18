@@ -21,6 +21,11 @@ export interface NamedStar {
 
 const NAMED_STARS: NamedStar[] = (rawNamedStars as { stars: NamedStar[] }).stars;
 
+/** The full bright named-star catalog (IAU/Bayer names with RA/Dec/magnitude). */
+export function getNamedStarCatalog(): NamedStar[] {
+  return NAMED_STARS;
+}
+
 /**
  * Find the named star closest to the given equatorial coordinates.
  *

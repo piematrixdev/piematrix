@@ -13,6 +13,7 @@ import type { Star, Planet, HorizontalCoordinates, MoonPosition, SunPosition, De
 import { getSaturnRingTiltRad } from '@virtual-window/astronomy-engine';
 import { createTextSprite } from './glLabels';
 import { effectiveLimitingMagnitude } from './stars';
+import { getNamedStarCatalog } from './starNames';
 import { computeGalileanMoons, computeTitan } from './planetaryMoons';
 import { getGroundAsset, DEFAULT_GROUND_ID } from './grounds';
 import rawConstellationData from './data/constellations.json';
@@ -411,14 +412,13 @@ const DSO_GALAXY_FRAG = `
   }
 `;
 
-// Nebula: diffuse irregular cloud with color variation
+// Nebula: faint, filamentary emission cloud (low surface brightness, wispy
+// irregular edges — not a saturated blob). Sized to its real angular extent.
 const DSO_NEBULA_FRAG = `
   uniform vec3 uColor;
   varying vec2 vUv;
 
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-  }
+  float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
   float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
@@ -429,31 +429,32 @@ const DSO_NEBULA_FRAG = `
     float d = hash(i + vec2(1.0, 1.0));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
   }
+  float fbm(vec2 p) {
+    float v = 0.0, amp = 0.5;
+    for (int i = 0; i < 4; i++) { v += amp * noise(p); p *= 2.02; amp *= 0.5; }
+    return v;
+  }
 
   void main() {
-    vec2 c = vUv - 0.5;
+    vec2 c = (vUv - 0.5) * 2.0; // -1 .. 1
     float d = length(c);
+    if (d > 1.0) discard;
 
-    // Irregular cloud shape using noise
-    vec2 nUv = c * 5.0 + vec2(3.7, 2.1);
-    float n1 = noise(nUv);
-    float n2 = noise(nUv * 2.3 + vec2(1.4, 0.8));
-    float cloudShape = n1 * 0.6 + n2 * 0.4;
+    // Soft, extended envelope — fades gently to nothing at the edge.
+    float env = smoothstep(1.0, 0.12, d);
+    // Filamentary structure: contrast-boosted fractal noise breaks up the disc
+    // into wisps so it never reads as a smooth blob.
+    float f = fbm(c * 2.3 + vec2(5.3, 1.7));
+    f = pow(clamp(f, 0.0, 1.0), 1.7);
+    float cloud = env * f;
+    // A little smooth diffuse base so the body still reads as a soft glow.
+    float base = env * env * 0.3;
 
-    // Base radial falloff
-    float falloff = exp(-d * d * 10.0);
-    // Modulate by cloud noise for irregular edges
-    float nebula = falloff * (0.5 + cloudShape * 0.7);
-
-    // Bright inner region
-    float inner = exp(-d * d * 40.0) * 0.6;
-
-    float intensity = inner + nebula * 0.5;
+    // Low overall surface brightness — real nebulae are faint.
+    float intensity = (cloud * 0.95 + base) * 0.5;
     vec3 col = uColor * intensity;
-    // Color variation in the cloud
-    col += vec3(0.1, -0.05, 0.15) * nebula * cloudShape;
-
-    float alpha = clamp(intensity, 0.0, 1.0);
+    float alpha = clamp(intensity, 0.0, 0.85);
+    if (alpha < 0.004) discard;
     gl_FragColor = vec4(col, alpha);
   }
 `;
@@ -552,7 +553,8 @@ const DSO_SHADERS: Record<string, string> = {
   'Planetary Nebula': DSO_PLANETARY_FRAG,
 };
 
-// Size multipliers per type (some objects should appear larger)
+// Size multipliers per type (legacy fallback; real angular sizes are used
+// when available — see DSO_SIZE_ARCMIN below).
 const DSO_SIZE_MULT: Record<string, number> = {
   Galaxy: 1.4,
   Nebula: 1.6,
@@ -560,6 +562,69 @@ const DSO_SIZE_MULT: Record<string, number> = {
   'Globular Cluster': 0.9,
   'Planetary Nebula': 0.9,
 };
+
+// Real major-axis angular sizes (arcminutes) for Messier objects, so each
+// deep-sky object is drawn at the size it actually subtends from Earth instead
+// of a uniform blob. Objects not listed fall back to a per-type default.
+const DSO_SIZE_ARCMIN: Record<string, number> = {
+  // Diffuse nebulae
+  M1: 6, M8: 90, M16: 25, M17: 11, M20: 28, M42: 85, M43: 20, M78: 8,
+  // Planetary nebulae (small)
+  M27: 8, M57: 1.4, M76: 2.7, M97: 3.4,
+  // Galaxies
+  M31: 178, M32: 8, M33: 70, M49: 9, M51: 11, M58: 6, M59: 5, M60: 7,
+  M61: 6, M63: 12, M64: 10, M65: 8, M66: 9, M74: 10, M77: 7, M81: 27,
+  M82: 11, M83: 13, M84: 5, M85: 7, M86: 9, M87: 7, M88: 7, M89: 5,
+  M90: 9, M91: 5, M94: 11, M95: 7, M96: 7, M98: 10, M99: 5, M100: 7,
+  M101: 29, M102: 5, M104: 9, M105: 5, M106: 19, M108: 8, M109: 8, M110: 22,
+  // Globular clusters
+  M2: 16, M3: 18, M4: 36, M5: 23, M9: 12, M10: 20, M12: 16, M13: 20,
+  M14: 11, M15: 18, M19: 17, M22: 32, M28: 11, M30: 12, M53: 13, M54: 12,
+  M55: 19, M56: 7, M62: 15, M68: 12, M69: 7, M70: 8, M71: 7, M72: 6,
+  M75: 6, M79: 9, M80: 10, M92: 14, M107: 13,
+  // Open clusters
+  M6: 25, M7: 80, M11: 14, M18: 9, M21: 13, M23: 27, M24: 90, M25: 32,
+  M26: 15, M29: 7, M34: 35, M35: 28, M36: 12, M37: 24, M38: 21, M39: 32,
+  M41: 38, M44: 95, M45: 110, M46: 27, M47: 30, M48: 54, M50: 16, M52: 13,
+  M67: 30, M93: 22, M103: 6,
+};
+const DSO_DEFAULT_ARCMIN: Record<string, number> = {
+  Galaxy: 8, Nebula: 15, 'Open Cluster': 20, 'Globular Cluster': 12, 'Planetary Nebula': 2,
+};
+
+/**
+ * Build a small "point of interest" reticle texture once: a soft ring broken
+ * into four arcs (a target-bracket look) so a deep-sky object is marked even
+ * when it's too faint or small to see. White; tinted per object via the
+ * sprite material colour.
+ */
+function buildDsoMarkerTexture(): THREE.DataTexture {
+  const S = 64;
+  const data = new Uint8Array(S * S * 4);
+  const cx = (S - 1) / 2, cy = (S - 1) / 2;
+  const ringR = 23, ringW = 2.2;
+  for (let y = 0; y < S; y++) {
+    for (let x = 0; x < S; x++) {
+      const dx = x - cx, dy = y - cy;
+      const r = Math.hypot(dx, dy);
+      // Soft ring profile
+      let a = Math.max(0, 1 - Math.abs(r - ringR) / ringW);
+      a = a * a;
+      // Break into 4 arcs with gaps near the diagonals → bracket look
+      const ang = Math.atan2(dy, dx);
+      const seg = Math.abs(((ang % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2) - Math.PI / 4);
+      if (seg > Math.PI / 4 - 0.35) a *= 0.0; // gap
+      const alpha = Math.round(Math.min(1, a) * 255);
+      const i = (y * S + x) * 4;
+      data[i] = 255; data[i + 1] = 255; data[i + 2] = 255; data[i + 3] = alpha;
+    }
+  }
+  const tex = new THREE.DataTexture(data, S, S, THREE.RGBAFormat);
+  tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.needsUpdate = true;
+  return tex;
+}
 
 interface Props {
   azimuth: number;
@@ -712,6 +777,11 @@ const MOON_PARENT: Record<string, string> = {
 const ARCSEC_TO_WORLD = (R - 10) * Math.PI / (180 * 3600); // CR = R - 10
 const PLANET_ZOOM_MAGNIFICATION = 40; // exaggerates tiny real discs so zoom "flies in"
 const PLANET_DOT_PX = 1.4;            // star-like point at wide FOV (px radius)
+// Moon orbits are huge in real planet-radii (Callisto ≈ 26 Rj), so at the
+// planet's magnified size they'd fling off-screen. Compress the orbital spread
+// so moons sit just outside the disc, ordered correctly, and visible WITH the
+// planet (their relative spacing is kept; only the absolute scale is reduced).
+const MOON_ORBIT_COMPRESSION = 0.22;
 
 /** World-space radius for a fixed on-screen pixel radius at the given FOV. */
 function pxToWorldRadius(px: number, fov: number, minScreenDim: number): number {
@@ -750,6 +820,8 @@ function SkyRendererImpl(props: Props) {
   const sunLightRef = useRef<THREE.DirectionalLight | null>(null);
   const orbitalPathRef = useRef<THREE.Line | null>(null);
   const dsoMeshes = useRef<THREE.Mesh[]>([]);
+  const dsoMarkers = useRef<THREE.Sprite[]>([]);
+  const dsoMarkerTexRef = useRef<THREE.DataTexture | null>(null);
   const satMeshes = useRef<THREE.Mesh[]>([]);
   const satTexRef = useRef<THREE.DataTexture | null>(null);
   const groundMeshRef = useRef<THREE.Mesh | null>(null);
@@ -2041,6 +2113,7 @@ function SkyRendererImpl(props: Props) {
     const TMP_Q = new THREE.Quaternion();
     const TMP_OBJ = new THREE.Object3D();
     const TMP_EULER = new THREE.Euler();
+    const TMP_PROJ = new THREE.Vector3(); // label center-fade projection
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
       const p = propsRef.current;
@@ -2193,9 +2266,13 @@ function SkyRendererImpl(props: Props) {
       TMP_EULER.setFromQuaternion(c.quaternion, 'YXZ');
       const rollAngle = TMP_EULER.z; // camera roll in radians
       const REF_FOV = 30;
-      const fovScale = Math.max(0.4, Math.min(4, currentFov / REF_FOV));
-      // Global "a bit smaller" multiplier for all text labels.
-      const LABEL_SHRINK = 0.8;
+      // Cancel the sprite's natural 1/FOV growth so labels stay a constant
+      // pixel size. The lower bound must stay below the tightest zoom
+      // (FOV 0.5° → 0.0167) or labels balloon to fill the screen when zoomed
+      // all the way into a planet. Upper bound limits growth at very wide FOV.
+      const fovScale = Math.max(0.012, Math.min(4, currentFov / REF_FOV));
+      // Global size multiplier for all text labels (1 = the base size).
+      const LABEL_SHRINK = 1.0;
 
       // Helper to apply constant-pixel-size scaling to a sprite, with an
       // optional extra multiplier (used for the global shrink + per-object
@@ -2212,11 +2289,32 @@ function SkyRendererImpl(props: Props) {
       };
 
       // Dynamic labels (stars, planets, satellites, DSOs, constellations…) —
-      // smaller overall, and modulated by each object's dynamic size factor.
+      // smaller overall, modulated by each object's dynamic size factor, and
+      // faded by distance from the screen centre so only what you're actually
+      // looking at is labelled (like the constellation art). Cardinal markers
+      // (priority 0) are exempt and stay visible for orientation.
+      const fadeCx = W * 0.5, fadeCy = H * 0.5;
+      const fadeMinDim = Math.min(W, H);
+      const fadeInner = fadeMinDim * 0.14;
+      const fadeOuter = fadeMinDim * 0.46;
       for (let i = 0; i < labelSprites.current.length; i++) {
         const s = labelSprites.current[i];
-        const dyn = (s.userData as { dynScale?: number }).dynScale ?? 1;
-        scaleSpriteToFov(s, true, LABEL_SHRINK * dyn);
+        if (!s.visible) continue;
+        const ud = s.userData as { dynScale?: number; priority?: number };
+        scaleSpriteToFov(s, true, LABEL_SHRINK * (ud.dynScale ?? 1));
+        const mat = s.material as THREE.SpriteMaterial;
+        if (ud.priority === 0) { mat.opacity = 1; continue; } // cardinals
+        // Project to screen and fade by distance from centre.
+        TMP_PROJ.copy(s.position).project(c);
+        let op = 0;
+        if (TMP_PROJ.z <= 1) {
+          const sx = (TMP_PROJ.x * 0.5 + 0.5) * W;
+          const sy = (-TMP_PROJ.y * 0.5 + 0.5) * H;
+          const d = Math.hypot(sx - fadeCx, sy - fadeCy);
+          const t = Math.max(0, Math.min(1, (d - fadeInner) / (fadeOuter - fadeInner)));
+          op = 1 - t * t * (3 - 2 * t); // smoothstep: 1 at centre → 0 at edge
+        }
+        mat.opacity = op;
       }
       // Coordinate grid labels (alt/az/equatorial)
       for (let i = 0; i < altGridLabels.length; i++) scaleSpriteToFov(altGridLabels[i], true, LABEL_SHRINK);
@@ -2226,6 +2324,27 @@ function SkyRendererImpl(props: Props) {
       // counter-rotation needed since the icon is symmetric). Left at full size.
       for (let i = 0; i < satMeshes.current.length; i++) {
         scaleSpriteToFov(satMeshes.current[i] as unknown as THREE.Sprite, false, 1);
+      }
+
+      // DSO locator reticles — always visible. At a wide field they're a
+      // constant-size "point of interest" bracket; as you zoom in they grow to
+      // frame the resolved object instead of vanishing.
+      const dsoMinDim = Math.min(W, H);
+      for (let i = 0; i < dsoMarkers.current.length; i++) {
+        const mk = dsoMarkers.current[i];
+        if (!mk.visible) continue;
+        const ud = mk.userData as { realR?: number };
+        const realR = ud.realR ?? 0;
+        // Constant on-screen locator radius (world units at this FOV).
+        const locatorWorldR = pxToWorldRadius(12, currentFov, dsoMinDim);
+        // Frame the object once it's bigger than the locator.
+        const bracketR = Math.max(locatorWorldR, realR * 1.5);
+        const sc = bracketR * 2.9; // ring sits at ~0.34 of the sprite width
+        mk.scale.set(sc, sc, 1);
+        // Distinct enough to notice but subtle; eases back further once it's
+        // framing a resolved object. Never fully disappears.
+        const framing = Math.max(0, Math.min(1, (realR * 1.5) / locatorWorldR - 1));
+        mk.material.opacity = 0.55 - 0.25 * framing;
       }
 
       // Show only the constellation art closest to screen center
@@ -2510,10 +2629,13 @@ function SkyRendererImpl(props: Props) {
     if (namedStarsSrc.current !== p.stars) {
       namedStarsSrc.current = p.stars;
       namedStarsRef.current = p.stars.filter(
-        (st) => st.name && st.magnitude <= 1.5 && st.id !== 'PIE-001',
+        (st) => st.name && st.id !== 'PIE-001',
       );
     }
     const namedStars = namedStarsRef.current;
+    // Bright IAU/Bayer named-star catalog (these carry real names; the Gaia
+    // tiers in p.stars do not). Used to label bright stars on zoom.
+    const brightStars = getNamedStarCatalog();
 
     // Reusable vector for eqToWorld — avoids a per-candidate allocation.
     const eqTmp = eqWorldTmp.current;
@@ -2557,8 +2679,17 @@ function SkyRendererImpl(props: Props) {
       const px = worldRadius / Math.max(worldPerPx, 1e-6);
       return Math.max(0.8, Math.min(1.7, 0.82 + px * 0.012));
     };
-    // Brighter stars get slightly larger labels.
-    const magDyn = (mag: number): number => Math.max(0.78, Math.min(1.2, 1.08 - mag * 0.05));
+    // Brighter stars get slightly larger labels (kept readable at the faint end).
+    const magDyn = (mag: number): number => Math.max(0.88, Math.min(1.3, 1.15 - mag * 0.05));
+    // Star-name magnitude cut: only the brightest names at a wide field, more
+    // (fainter) bright stars revealed as you zoom in.
+    const starLabelMag = Math.max(1.6, Math.min(6.5, 1.6 + Math.log2(60 / Math.max(lf, 1)) * 1.2));
+    // Constellation names: a little bigger across a wide field, but still
+    // clearly readable when zoomed into a small patch.
+    const constellationDyn = Math.max(0.85, Math.min(1.35, lf / 45));
+    // Constant-pixel vertical offset so a star's name clears the star itself
+    // at any zoom (a fixed angular offset overlaps the star at wide FOV).
+    const starDecGap = (16 / labelMinDim) * lf;
 
     // Cardinals (always show — fixed in horizontal frame)
     const cardinals: Array<[string, number, string, number?]> = [
@@ -2609,30 +2740,29 @@ function SkyRendererImpl(props: Props) {
         }
 
         // Planetary moon labels (only when zoomed in enough to see them).
-        // Positioned with the SAME 3D math as the moon dots so each label
-        // tracks its moon exactly, then nudged out along the sky-north axis.
+        // Positioned with the SAME EQJ mapping as the moon dots so each label
+        // tracks its moon exactly, then nudged out a little for legibility.
         if (labelFov < 20) {
           const now = new Date();
+          const skyQuat = new THREE.Quaternion();
+          skyGroupRef.current?.getWorldQuaternion(skyQuat);
+          const off = new THREE.Vector3();
 
           // Jupiter's moons
           const jupiterPos = p.planetPositions.get('jupiter');
           if (jupiterPos && !(clipBelow && jupiterPos.altitude < 0)) {
             const jupRealRadius = (PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0) * ARCSEC_TO_WORLD;
             const jupRendered = planetRenderedWorldRadius(PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0, labelFov, minDim);
-            const moonScale = jupRendered / jupRealRadius;
-            const moons = computeGalileanMoons(now, 5.2);
+            const moonScale = (jupRendered / jupRealRadius) * MOON_ORBIT_COMPRESSION;
+            const s = ARCSEC_TO_WORLD * moonScale;
+            const moons = computeGalileanMoons(now);
             const [jx, jy, jz] = hz2v(jupiterPos.azimuth, jupiterPos.altitude, CR);
-            const f = skyBasis(jx, jy, jz);
-            const gap = jupRendered * 0.15 + pxToWorldRadius(5, labelFov, minDim);
+            const gap = jupRendered * 0.25 + pxToWorldRadius(7, labelFov, minDim);
             for (const moon of moons) {
-              const e = moon.dRA * ARCSEC_TO_WORLD * moonScale;
-              const n = moon.dDec * ARCSEC_TO_WORLD * moonScale;
-              const l = moon.dLos * ARCSEC_TO_WORLD * moonScale;
+              off.set(moon.ex, moon.ez, -moon.ey).multiplyScalar(s).applyQuaternion(skyQuat);
               candidates.push({
-                wx: jx + f.ex * e + f.nx * n - f.ox * l + f.nx * gap,
-                wy: jy + f.ey * e + f.ny * n - f.oy * l + f.ny * gap,
-                wz: jz + f.ez * e + f.nz * n - f.oz * l + f.nz * gap,
-                text: moon.name, color: '#bbb', scale: 3.0, priority: 4, dyn: 0.85,
+                wx: jx + off.x, wy: jy + off.y + gap, wz: jz + off.z,
+                text: moon.name, color: '#cfd6e6', scale: 6.5, priority: 4, dyn: 1.0,
               });
             }
           }
@@ -2643,30 +2773,36 @@ function SkyRendererImpl(props: Props) {
             if (saturnPos && !(clipBelow && saturnPos.altitude < 0)) {
               const satRealRadius = (PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5) * ARCSEC_TO_WORLD;
               const satRendered = planetRenderedWorldRadius(PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5, labelFov, minDim);
-              const moonScale = satRendered / satRealRadius;
-              const titan = computeTitan(now, 9.5);
+              const moonScale = (satRendered / satRealRadius) * MOON_ORBIT_COMPRESSION;
+              const s = ARCSEC_TO_WORLD * moonScale;
+              const saturnPlanet = p.planets.find((pl) => pl.id === 'saturn');
+              const titan = computeTitan(now, saturnPlanet?.ra ?? 0, saturnPlanet?.dec ?? 0);
               const [sx, sy, sz] = hz2v(saturnPos.azimuth, saturnPos.altitude, CR);
-              const f = skyBasis(sx, sy, sz);
-              const gap = satRendered * 0.15 + pxToWorldRadius(5, labelFov, minDim);
-              const e = titan.dRA * ARCSEC_TO_WORLD * moonScale;
-              const n = titan.dDec * ARCSEC_TO_WORLD * moonScale;
-              const l = titan.dLos * ARCSEC_TO_WORLD * moonScale;
+              const gap = satRendered * 0.25 + pxToWorldRadius(7, labelFov, minDim);
+              off.set(titan.ex, titan.ez, -titan.ey).multiplyScalar(s).applyQuaternion(skyQuat);
               candidates.push({
-                wx: sx + f.ex * e + f.nx * n - f.ox * l + f.nx * gap,
-                wy: sy + f.ey * e + f.ny * n - f.oy * l + f.ny * gap,
-                wz: sz + f.ez * e + f.nz * n - f.oz * l + f.nz * gap,
-                text: 'Titan', color: '#bbb', scale: 3.0, priority: 4, dyn: 0.85,
+                wx: sx + off.x, wy: sy + off.y + gap, wz: sz + off.z,
+                text: 'Titan', color: '#cfd6e6', scale: 6.5, priority: 4, dyn: 1.0,
               });
             }
           }
         }
       }
 
-      // Star names — use the precomputed named-star subset (not all 192k)
-      for (const star of namedStars) {
-        const [wx, wy, wz] = eqToWorld(star.ra, star.dec + 0.8, R);
+      // Star names — bright IAU/Bayer named stars from the dedicated catalog.
+      // The magnitude cut widens as you zoom in, so progressively more bright
+      // stars get labelled the closer you look (deconfliction prevents clutter).
+      for (const star of brightStars) {
+        if (star.magnitude > starLabelMag) continue;
+        const [wx, wy, wz] = eqToWorld(star.ra, star.dec + starDecGap, R);
         if (clipBelow && wy < 0) continue;
-        candidates.push({ wx, wy, wz, text: star.name!, color: '#ddd', scale: 7.0, priority: 3, dyn: magDyn(star.magnitude) });
+        candidates.push({ wx, wy, wz, text: star.name, color: '#dfe6f2', scale: 8.5, priority: 3, dyn: magDyn(star.magnitude) });
+      }
+      // Any named stars carried in the live catalog (e.g. custom entries).
+      for (const star of namedStars) {
+        const [wx, wy, wz] = eqToWorld(star.ra, star.dec + starDecGap, R);
+        if (clipBelow && wy < 0) continue;
+        candidates.push({ wx, wy, wz, text: star.name!, color: '#dfe6f2', scale: 8.5, priority: 3, dyn: magDyn(star.magnitude) });
       }
 
       // Constellation labels — compute directly from raw data, no stale prop dependency
@@ -2676,20 +2812,22 @@ function SkyRendererImpl(props: Props) {
           const [wx, wy, wz] = eqToWorld(c.centerRA / 15, c.centerDec, R - 0.4);
           // Hide below horizon when ground is on; otherwise show all the way down.
           if (clipBelow && wy < -2) continue;
-          candidates.push({ wx, wy, wz, text: c.name, color: '#5588bb', scale: 13.0, priority: 4 });
+          candidates.push({ wx, wy, wz, text: c.name, color: '#5588bb', scale: 13.0, priority: 4, dyn: constellationDyn });
         }
       }
 
       // DSO labels — use equatorial coords through skyGroup
       if (p.showLayers.deepSky) {
+        const dsoMagLimit = Math.max(5.0, Math.min(11, 5.0 + Math.log2(40 / Math.max(lf, 1)) * 1.2));
         for (const dso of p.deepSkyPositions.values()) {
           if (!dso.isVisible) continue;
           if (clipBelow && dso.altitude < 0) continue;
-          const [wx, wy, wz] = eqToWorld(dso.object.ra, dso.object.dec + 0.5, CR);
+          if (dso.object.magnitude > dsoMagLimit) continue;
+          const [wx, wy, wz] = eqToWorld(dso.object.ra, dso.object.dec + starDecGap, CR);
           const dsoLabel = dso.object.name
             ? `${dso.object.id} ${dso.object.name}`
             : dso.object.id;
-          candidates.push({ wx, wy, wz, text: dsoLabel, color: '#0cc', scale: 6.0, priority: 5 });
+          candidates.push({ wx, wy, wz, text: dsoLabel, color: '#0cc', scale: 6.0, priority: 5, dyn: 0.9 });
         }
       }
 
@@ -2702,7 +2840,7 @@ function SkyRendererImpl(props: Props) {
           if (clipBelow && sat.altitude < 0) continue;
           // Tracker returns degrees — hz2v also expects degrees
           const [wx, wy, wz] = hz2v(sat.azimuth, sat.altitude, CR);
-          candidates.push({ wx, wy, wz, text: '\u2022 ' + (sat.name || key), color: '#4ade80', scale: 8.0, priority: 1 });
+          candidates.push({ wx, wy, wz, text: '\u2022 ' + (sat.name || key), color: '#4ade80', scale: 8.0, priority: 1, dyn: 0.92 });
         }
         if (satCount === 0 && p.satellitePositions.size > 0) {
         }
@@ -2762,7 +2900,8 @@ function SkyRendererImpl(props: Props) {
       }
 
       sprite.position.set(c.wx, c.wy, c.wz);
-      (sprite.userData as { dynScale?: number }).dynScale = c.dyn ?? 1;
+      (sprite.userData as { dynScale?: number; priority?: number }).dynScale = c.dyn ?? 1;
+      (sprite.userData as { dynScale?: number; priority?: number }).priority = c.priority;
       sprite.visible = true;
     }
 
@@ -2900,36 +3039,35 @@ function SkyRendererImpl(props: Props) {
         const parent = MOON_PARENT[moonId];
         const ratio = (BODY_RADIUS_KM[moonId] ?? 1800) / (BODY_RADIUS_KM[parent] ?? 60000);
         const proportional = planetRenderedRadius * ratio;
-        const minR = pxToWorldRadius(0.8, currentFov, minScreenDim); // visibility floor
+        const minR = pxToWorldRadius(1.2, currentFov, minScreenDim); // visibility floor
         const maxR = planetRenderedRadius * 0.08;                    // ≤ 8% of planet radius
         return Math.min(Math.max(proportional, minR), maxR);
       };
 
-      // Jupiter's moons
+      // Jupiter's moons (accurate ephemeris). The EQJ offset vector is mapped
+      // into the sky exactly like a star (local = (ex, ez, -ey)) then rotated
+      // by the sky group, so the moon line is correctly oriented (equatorial)
+      // and the line-of-sight component gives real depth for occlusion. The
+      // spread is magnified (∝ rendered planet size) and compressed so the
+      // moons stay near the disc and on-screen.
+      const skyQuat = new THREE.Quaternion();
+      skyGroupRef.current?.getWorldQuaternion(skyQuat);
+      const moonOff = new THREE.Vector3();
+
       const jupiterPos = p.planetPositions.get('jupiter');
       if (jupiterPos && !(p.showGround && jupiterPos.altitude < 0)) {
-        const jupDistAU = 5.2;
-        const moons = computeGalileanMoons(now, jupDistAU);
+        const moons = computeGalileanMoons(now);
         const [jx, jy, jz] = hz2v(jupiterPos.azimuth, jupiterPos.altitude, CR);
         const jupRealRadius = (PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0) * arcsecToWorld;
         const jupRendered = planetRenderedRadius(PLANET_ANG_RADIUS_ARCSEC['jupiter'] ?? 20.0);
-        const moonScale = jupRendered / jupRealRadius; // orbit spread ∝ planet size
-        const f = skyBasis(jx, jy, jz);
+        const moonScale = (jupRendered / jupRealRadius) * MOON_ORBIT_COMPRESSION;
+        const s = arcsecToWorld * moonScale;
 
         for (const moon of moons) {
           const dot = moonDotsRef.current.get(moon.id);
           if (!dot) continue;
-          // 3D offset: east/north on the sky plane, plus line-of-sight depth
-          // (toward camera = -out) so moons orbit in a real ring and the
-          // planet body occludes those passing behind it.
-          const e = moon.dRA * arcsecToWorld * moonScale;
-          const n = moon.dDec * arcsecToWorld * moonScale;
-          const l = moon.dLos * arcsecToWorld * moonScale;
-          dot.position.set(
-            jx + f.ex * e + f.nx * n - f.ox * l,
-            jy + f.ey * e + f.ny * n - f.oy * l,
-            jz + f.ez * e + f.nz * n - f.oz * l,
-          );
+          moonOff.set(moon.ex, moon.ez, -moon.ey).multiplyScalar(s).applyQuaternion(skyQuat);
+          dot.position.set(jx + moonOff.x, jy + moonOff.y, jz + moonOff.z);
           dot.scale.setScalar(moonWorldRadius(moon.id, jupRendered));
           dot.visible = true;
         }
@@ -2938,23 +3076,17 @@ function SkyRendererImpl(props: Props) {
       // Titan near Saturn
       const saturnPos = p.planetPositions.get('saturn');
       if (saturnPos && !(p.showGround && saturnPos.altitude < 0)) {
-        const satDistAU = 9.5;
-        const titan = computeTitan(now, satDistAU);
+        const saturnPlanet = p.planets.find((pl) => pl.id === 'saturn');
+        const titan = computeTitan(now, saturnPlanet?.ra ?? 0, saturnPlanet?.dec ?? 0);
         const dot = moonDotsRef.current.get('titan');
         if (dot) {
           const [sx, sy, sz] = hz2v(saturnPos.azimuth, saturnPos.altitude, CR);
           const satRealRadius = (PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5) * arcsecToWorld;
           const satRendered = planetRenderedRadius(PLANET_ANG_RADIUS_ARCSEC['saturn'] ?? 8.5);
-          const moonScale = satRendered / satRealRadius;
-          const f = skyBasis(sx, sy, sz);
-          const e = titan.dRA * arcsecToWorld * moonScale;
-          const n = titan.dDec * arcsecToWorld * moonScale;
-          const l = titan.dLos * arcsecToWorld * moonScale;
-          dot.position.set(
-            sx + f.ex * e + f.nx * n - f.ox * l,
-            sy + f.ey * e + f.ny * n - f.oy * l,
-            sz + f.ez * e + f.nz * n - f.oz * l,
-          );
+          const moonScale = (satRendered / satRealRadius) * MOON_ORBIT_COMPRESSION;
+          const s = arcsecToWorld * moonScale;
+          moonOff.set(titan.ex, titan.ez, -titan.ey).multiplyScalar(s).applyQuaternion(skyQuat);
+          dot.position.set(sx + moonOff.x, sy + moonOff.y, sz + moonOff.z);
           dot.scale.setScalar(moonWorldRadius('titan', satRendered));
           dot.visible = true;
         }
@@ -3068,15 +3200,23 @@ function SkyRendererImpl(props: Props) {
     }
 
     // --- Deep sky objects — reuse meshes from pool ---
-    // Hide all existing DSO meshes
+    // Hide all existing DSO meshes + markers
     for (const m of dsoMeshes.current) m.visible = false;
+    for (const mk of dsoMarkers.current) mk.visible = false;
+    if (!dsoMarkerTexRef.current) dsoMarkerTexRef.current = buildDsoMarkerTexture();
 
     if (p.showLayers.deepSky) {
+      // Reveal limit: at a wide field only the prominent objects show; as you
+      // zoom in, progressively fainter/farther objects (and their markers)
+      // appear — mirroring how more becomes "reachable" the closer you look.
+      const dsoMagLimit = Math.max(5.0, Math.min(11, 5.0 + Math.log2(40 / Math.max(currentFov, 1)) * 1.2));
       let dsoIdx = 0;
       for (const dso of p.deepSkyPositions.values()) {
         if (!dso.isVisible) continue;
         // Hide below horizon when ground is on
         if (p.showGround && dso.altitude < 0) continue;
+        // Skip objects too faint to be relevant at the current zoom.
+        if (dso.object.magnitude > dsoMagLimit) continue;
 
         // Equatorial Cartesian — added to skyGroup so they rotate with the stars.
         // dso.object.ra is in HOURS, dso.object.dec in DEGREES.
@@ -3084,12 +3224,22 @@ function SkyRendererImpl(props: Props) {
 
         const rgb = DSO_COLORS[dso.object.type] ?? [0.0, 0.8, 0.8];
         const belowFade = dso.altitude >= 0 ? 1.0 : Math.max(0.15, 1.0 + dso.altitude / 25);
+        // Brightness from magnitude (not size): brighter objects are more
+        // opaque, faint ones barely there — matching real surface brightness.
+        const magBright = Math.max(0.28, Math.min(1.0, (10.5 - dso.object.magnitude) / 6.5));
+        const intensity = belowFade * magBright;
 
-        // Size based on magnitude (brighter = larger) and type
-        const magFactor = Math.max(0.6, 1.0 + (7.0 - dso.object.magnitude) * 0.12);
-        const typeMult = DSO_SIZE_MULT[dso.object.type] ?? 1.0;
+        // Size from the object's REAL angular extent (major axis), converted to
+        // world units on the celestial sphere. A small on-screen floor keeps
+        // tiny objects (e.g. the Ring Nebula) findable; otherwise each object
+        // grows naturally to its true apparent size as you zoom in.
+        const angArcmin = DSO_SIZE_ARCMIN[dso.object.id]
+          ?? DSO_DEFAULT_ARCMIN[dso.object.type] ?? 8;
+        const realRadiusWorld = (angArcmin * 0.5) * (Math.PI / (180 * 60)) * CR;
         const horizonScale = dso.altitude >= 0 ? 1.0 : Math.max(0.4, 1.0 + dso.altitude / 40);
-        const size = 35 * magFactor * typeMult * horizonScale;
+        const minWorld = pxToWorldRadius(5, currentFov, minScreenDim);
+        // Plane is a touch larger than the visible cloud so soft edges fit.
+        const size = Math.max(minWorld, realRadiusWorld) * 2.3 * horizonScale;
 
         const frag = DSO_SHADERS[dso.object.type] ?? DSO_GALAXY_FRAG;
 
@@ -3098,7 +3248,7 @@ function SkyRendererImpl(props: Props) {
         if (dsoIdx < dsoMeshes.current.length) {
           sprite = dsoMeshes.current[dsoIdx];
           // Update color uniform
-          (sprite.material as THREE.ShaderMaterial).uniforms.uColor.value.set(rgb[0] * belowFade, rgb[1] * belowFade, rgb[2] * belowFade);
+          (sprite.material as THREE.ShaderMaterial).uniforms.uColor.value.set(rgb[0] * intensity, rgb[1] * intensity, rgb[2] * intensity);
           // Update geometry size if needed
           const geo = sprite.geometry as THREE.PlaneGeometry;
           const params = geo.parameters;
@@ -3114,7 +3264,7 @@ function SkyRendererImpl(props: Props) {
           }
         } else {
           sprite = makeBillboardSprite(size, frag, {
-            uColor: { value: new THREE.Vector3(rgb[0] * belowFade, rgb[1] * belowFade, rgb[2] * belowFade) },
+            uColor: { value: new THREE.Vector3(rgb[0] * intensity, rgb[1] * intensity, rgb[2] * intensity) },
           });
           sprite.renderOrder = 1;
           skyGroupRef.current!.add(sprite);
@@ -3122,6 +3272,33 @@ function SkyRendererImpl(props: Props) {
         }
         sprite.position.set(x, y, z);
         sprite.visible = true;
+
+        // Locator reticle — a constant-size "point of interest" marker so the
+        // object is findable even when faint/tiny; fades out as you zoom in and
+        // the real object resolves. Positioned just in front of the object.
+        let marker: THREE.Sprite;
+        if (dsoIdx < dsoMarkers.current.length) {
+          marker = dsoMarkers.current[dsoIdx];
+        } else {
+          const mkMat = new THREE.SpriteMaterial({
+            map: dsoMarkerTexRef.current!,
+            transparent: true, depthTest: false, depthWrite: false,
+            blending: THREE.AdditiveBlending,
+          });
+          marker = new THREE.Sprite(mkMat);
+          marker.renderOrder = 6;
+          skyGroupRef.current!.add(marker);
+          dsoMarkers.current.push(marker);
+        }
+        const [mx, my, mz] = raDecDegToCart(dso.object.ra * 15, dso.object.dec, CR - 2);
+        marker.position.set(mx, my, mz);
+        marker.material.color.setRGB(rgb[0], rgb[1], rgb[2]);
+        // Stash the real size + brightness so the per-frame loop can size it to
+        // a constant pixel reticle and fade it once the object is resolved.
+        (marker.userData as { realR?: number; bright?: number }).realR = realRadiusWorld;
+        (marker.userData as { realR?: number; bright?: number }).bright = magBright;
+        marker.visible = true;
+
         dsoIdx++;
       }
     }

@@ -1,194 +1,136 @@
 /**
- * planetaryMoons.ts — Galilean moon positions for Jupiter.
+ * planetaryMoons.ts — accurate positions for Jupiter's Galilean moons and
+ * Saturn's Titan, expressed as angular offsets from their parent planet.
  *
- * Computes the positions of Io, Europa, Ganymede, and Callisto relative
- * to Jupiter using simplified Lieske E2x3 theory. Returns angular offsets
- * in arcseconds from Jupiter's center, suitable for rendering as tiny
- * dots flanking the planet. The renderer scales offsets to be visible
- * at any FOV while preserving relative positions.
+ * Jupiter's four moons use the high-accuracy `JupiterMoons` ephemeris from
+ * astronomy-engine (jovicentric state vectors in the Earth-equatorial J2000
+ * frame, EQJ). This matches what planetarium apps such as Stellarium show —
+ * the previous home-grown mean-longitude theory drifted by many orbits over
+ * the years and produced essentially random positions.
  *
- * Also includes Saturn's Titan for good measure (single-moon, simple orbit).
+ * Titan still uses a simple circular model (astronomy-engine does not provide
+ * Saturn's moons), converted into the same EQJ representation so the renderer
+ * can treat every moon identically.
  *
- * Reference: Jean Meeus, "Astronomical Algorithms" (2nd ed.), Chapter 44.
+ * Output convention — each moon carries its offset from the planet centre as
+ * an angular vector in the EQJ frame, in ARCSECONDS:
+ *   ex → component along EQJ X (towards RA 0h, Dec 0°)
+ *   ey → component along EQJ Y (towards RA 6h, Dec 0°)
+ *   ez → component along EQJ Z (towards the North Celestial Pole)
+ * The renderer maps this EQJ vector into the sky the same way it maps stars,
+ * so the moon line is correctly oriented (equatorial), and the line-of-sight
+ * component gives real depth for occlusion by the planet.
  */
 
+import { JupiterMoons, GeoVector, Body } from 'astronomy-engine';
+
 const DEG = Math.PI / 180;
-const RAD = 180 / Math.PI;
+const ARCSEC_PER_RAD = 206264.806;
 
 export interface MoonPosition {
   id: string;
   name: string;
-  /** Angular offset from planet center in RA (arcseconds, east positive) */
-  dRA: number;
-  /** Angular offset from planet center in Dec (arcseconds, north positive) */
-  dDec: number;
-  /**
-   * Line-of-sight offset from the planet center (arcseconds). Positive means
-   * the moon is on the near side of its orbit (toward the observer); negative
-   * means the far side (behind the planet). Used to give the moon system real
-   * depth so the planet can occlude moons passing behind it.
-   */
-  dLos: number;
+  /** EQJ angular offset from the planet centre (arcseconds). */
+  ex: number;
+  ey: number;
+  ez: number;
   /** Apparent magnitude */
   magnitude: number;
   /** Parent planet id */
   parentId: string;
 }
 
-/**
- * Compute Julian Day Number from a Date.
- */
-function dateToJD(date: Date): number {
-  const y = date.getUTCFullYear();
-  const m = date.getUTCMonth() + 1;
-  const d = date.getUTCDate() +
-    date.getUTCHours() / 24 +
-    date.getUTCMinutes() / 1440 +
-    date.getUTCSeconds() / 86400;
-  let Y = y, M = m;
-  if (M <= 2) { Y -= 1; M += 12; }
-  const A = Math.floor(Y / 100);
-  const B = 2 - A + Math.floor(A / 4);
-  return Math.floor(365.25 * (Y + 4716)) + Math.floor(30.6001 * (M + 1)) + d + B - 1524.5;
-}
-
-/**
- * Galilean moon orbital elements (simplified Lieske E2x3).
- * Each moon: period (days), semi-major axis (Jupiter radii),
- * mean longitude at J2000, magnitude.
- */
-const GALILEAN = [
-  { id: 'io',       name: 'Io',       period: 1.769137786, a: 5.905, L0: 106.07947, mag: 5.0 },
-  { id: 'europa',   name: 'Europa',   period: 3.551181041, a: 9.397, L0: 175.73161, mag: 5.3 },
-  { id: 'ganymede', name: 'Ganymede', period: 7.154552870, a: 14.989, L0: 120.55883, mag: 4.6 },
-  { id: 'callisto', name: 'Callisto', period: 16.68901840, a: 26.364, L0: 84.44459, mag: 5.7 },
-];
-
-// Jupiter's equatorial radius in arcseconds at 1 AU distance
-const JUPITER_RADIUS_AU = 7.1492e7 / 1.496e11; // km → AU
-// Angular size of Jupiter's radius at distance d (AU): atan(R/d) in arcsec
-function jupiterRadiusArcsec(distAU: number): number {
-  return Math.atan(JUPITER_RADIUS_AU / distAU) * 206265;
-}
-
-/**
- * Compute Galilean moon positions relative to Jupiter.
- *
- * @param date - Current time
- * @param jupiterDistAU - Jupiter's distance from Earth in AU (get from planet calculator)
- * @returns Array of 4 moon positions (angular offsets from Jupiter center)
- */
-export function computeGalileanMoons(date: Date, jupiterDistAU: number): MoonPosition[] {
-  const jd = dateToJD(date);
-  const d = jd - 2451545.0; // days since J2000
-
-  // Jupiter radius in arcsec at current distance
-  const rJupArcsec = jupiterRadiusArcsec(jupiterDistAU);
-
-  const moons: MoonPosition[] = [];
-
-  for (const moon of GALILEAN) {
-    // Mean longitude (degrees)
-    const L = (moon.L0 + (360 / moon.period) * d) % 360;
-    const Lrad = L * DEG;
-
-    // Position angle in orbit (simplified — circular orbit seen nearly
-    // edge-on). Decompose the circular orbit of radius `a` into three axes:
-    //   sin(L)            → east/west on the sky (tangential)
-    //   cos(L)·cos(tilt)  → line of sight (depth, toward/away from observer)
-    //   cos(L)·sin(tilt)  → north/south on the sky (small, from axial tilt)
-    const tilt = 3.1 * DEG; // Jupiter's equatorial plane tilt to our line of sight
-    const xJupRadii = moon.a * Math.sin(Lrad);
-    const losJupRadii = moon.a * Math.cos(Lrad) * Math.cos(tilt);
-    const yJupRadii = moon.a * Math.cos(Lrad) * Math.sin(tilt);
-
-    // Convert from Jupiter radii to arcseconds
-    const dRA = xJupRadii * rJupArcsec;
-    const dDec = yJupRadii * rJupArcsec;
-    const dLos = losJupRadii * rJupArcsec;
-
-    moons.push({
-      id: moon.id,
-      name: moon.name,
-      dRA,
-      dDec,
-      dLos,
-      magnitude: moon.mag,
-      parentId: 'jupiter',
-    });
-  }
-
-  return moons;
-}
-
-/**
- * Saturn's Titan — the only moon easily visible in binoculars.
- */
-const TITAN = {
-  id: 'titan', name: 'Titan',
-  period: 15.945, // days
-  a: 20.3, // Saturn radii
-  L0: 261.0, // mean longitude at J2000 (approx)
-  mag: 8.3,
+const GALILEAN_MAG: Record<string, number> = {
+  io: 5.0, europa: 5.3, ganymede: 4.6, callisto: 5.7,
 };
 
-const SATURN_RADIUS_AU = 6.0268e7 / 1.496e11;
+/**
+ * Accurate Galilean moon offsets from Jupiter's centre at `date`.
+ * Uses astronomy-engine's jovicentric EQJ state vectors, converted from the
+ * linear (AU) offset to an angular (arcsec) offset using Jupiter's current
+ * geocentric distance.
+ */
+export function computeGalileanMoons(date: Date): MoonPosition[] {
+  const jm = JupiterMoons(date);
+  const jv = GeoVector(Body.Jupiter, date, true);
+  const jupDistAU = Math.sqrt(jv.x * jv.x + jv.y * jv.y + jv.z * jv.z) || 5.2;
+  // AU → arcsec at Jupiter's distance (small-angle: arc = linear / distance).
+  const k = ARCSEC_PER_RAD / jupDistAU;
 
-function saturnRadiusArcsec(distAU: number): number {
-  return Math.atan(SATURN_RADIUS_AU / distAU) * 206265;
+  const entries: Array<{ id: string; name: string; sv: { x: number; y: number; z: number } }> = [
+    { id: 'io', name: 'Io', sv: jm.io },
+    { id: 'europa', name: 'Europa', sv: jm.europa },
+    { id: 'ganymede', name: 'Ganymede', sv: jm.ganymede },
+    { id: 'callisto', name: 'Callisto', sv: jm.callisto },
+  ];
+
+  return entries.map((e) => ({
+    id: e.id,
+    name: e.name,
+    ex: e.sv.x * k,
+    ey: e.sv.y * k,
+    ez: e.sv.z * k,
+    magnitude: GALILEAN_MAG[e.id] ?? 5.0,
+    parentId: 'jupiter',
+  }));
+}
+
+// --- Titan (simple circular model, no library support for Saturn moons) ---
+const TITAN = {
+  period: 15.945, // days
+  a: 20.3,        // Saturn radii
+  L0: 261.0,      // mean longitude at J2000 (approx)
+  mag: 8.3,
+};
+const SATURN_RADIUS_AU = 6.0268e7 / 1.496e11;
+const SATURN_TILT = 26.7 * DEG; // ring/axial tilt to our line of sight
+
+function dateToJD(date: Date): number {
+  return date.getTime() / 86400000 + 2440587.5;
 }
 
 /**
- * Compute Titan's position relative to Saturn.
+ * Titan's offset from Saturn, returned in the same EQJ arcsecond convention as
+ * the Galilean moons. We build the offset in Saturn's local sky frame (east /
+ * north / line-of-sight) then rotate it into EQJ using Saturn's RA/Dec, so the
+ * renderer handles it identically.
+ *
+ * @param date       current time
+ * @param satRaHours Saturn's right ascension (hours)
+ * @param satDecDeg  Saturn's declination (degrees)
+ * @param satDistAU  Saturn's geocentric distance (AU)
  */
-export function computeTitan(date: Date, saturnDistAU: number): MoonPosition {
-  const jd = dateToJD(date);
-  const d = jd - 2451545.0;
+export function computeTitan(
+  date: Date,
+  satRaHours: number,
+  satDecDeg: number,
+  satDistAU = 9.5,
+): MoonPosition {
+  const d = dateToJD(date) - 2451545.0;
+  const rSatArcsec = Math.atan(SATURN_RADIUS_AU / satDistAU) * ARCSEC_PER_RAD;
+  const L = ((TITAN.L0 + (360 / TITAN.period) * d) % 360) * DEG;
 
-  const rSatArcsec = saturnRadiusArcsec(saturnDistAU);
-  const L = (TITAN.L0 + (360 / TITAN.period) * d) % 360;
-  const Lrad = L * DEG;
+  // Local sky-frame offset (arcsec): east (RA), north (Dec), line of sight.
+  const east = TITAN.a * Math.sin(L) * rSatArcsec;                       // tangential
+  const north = TITAN.a * Math.cos(L) * Math.sin(SATURN_TILT) * rSatArcsec;
+  const los = TITAN.a * Math.cos(L) * Math.cos(SATURN_TILT) * rSatArcsec; // +los = away
 
-  const tilt = 26.7 * DEG; // Saturn's ring/axial tilt to our line of sight
-  const xSatRadii = TITAN.a * Math.sin(Lrad);
-  const losSatRadii = TITAN.a * Math.cos(Lrad) * Math.cos(tilt);
-  const ySatRadii = TITAN.a * Math.cos(Lrad) * Math.sin(tilt);
+  // EQJ basis at Saturn's direction.
+  const ra = satRaHours * 15 * DEG;
+  const dec = satDecDeg * DEG;
+  const cr = Math.cos(ra), sr = Math.sin(ra), cd = Math.cos(dec), sd = Math.sin(dec);
+  // u = direction to Saturn, eastV = d/dRA, northV = d/dDec (EQJ unit vectors)
+  const ux = cd * cr, uy = cd * sr, uz = sd;
+  const ex = -sr, ey = cr, ez = 0;
+  const nx = -sd * cr, ny = -sd * sr, nz = cd;
 
   return {
-    id: TITAN.id,
-    name: TITAN.name,
-    dRA: xSatRadii * rSatArcsec,
-    dDec: ySatRadii * rSatArcsec,
-    dLos: losSatRadii * rSatArcsec,
+    id: 'titan',
+    name: 'Titan',
+    ex: east * ex + north * nx + los * ux,
+    ey: east * ey + north * ny + los * uy,
+    ez: east * ez + north * nz + los * uz,
     magnitude: TITAN.mag,
     parentId: 'saturn',
   };
-}
-
-/**
- * Get all planetary moons for rendering.
- * Moons are always computed — visibility is handled by the renderer
- * which scales their offsets to be visible at any FOV.
- *
- * @param date - Current time
- * @param planets - Map of planet id → { distAU } (from planet calculator)
- */
-export function getVisiblePlanetaryMoons(
-  _fov: number,
-  date: Date,
-  planets: Map<string, { distAU: number }>
-): MoonPosition[] {
-  const moons: MoonPosition[] = [];
-
-  const jupiter = planets.get('jupiter');
-  if (jupiter) {
-    moons.push(...computeGalileanMoons(date, jupiter.distAU));
-  }
-
-  const saturn = planets.get('saturn');
-  if (saturn) {
-    moons.push(computeTitan(date, saturn.distAU));
-  }
-
-  return moons;
 }
