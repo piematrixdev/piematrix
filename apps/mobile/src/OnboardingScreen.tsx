@@ -18,6 +18,7 @@ import {
   Radar, Eye, ArrowRight2, TickCircle, Gallery, Call, Sms,
 } from 'iconsax-react-native';
 import { useAuth } from './auth/AuthContext';
+import { useContent } from './content/ContentContext';
 import { supabase } from './auth/supabaseClient';
 import { fetchCollectionProducts, Product } from './shopify';
 import { requestAllPermissions } from './permissions';
@@ -459,6 +460,7 @@ function SignUpStep({ onNext }: { onNext: () => void }) {
 }
 
 function PermissionsStep({ onNext }: { onNext: () => void }) {
+  const { t } = useContent();
   const [requesting, setRequesting] = useState(false);
   const [done, setDone] = useState(false);
 
@@ -471,15 +473,15 @@ function PermissionsStep({ onNext }: { onNext: () => void }) {
   };
 
   const PERMS = [
-    { icon: <Radar size={22} color="#d4c5a0" variant="Bulk" />, title: 'Motion & Location', desc: 'Point your phone at the sky to identify what you see' },
-    { icon: <Star1 size={22} color="#d4c5a0" variant="Bulk" />, title: 'Notifications', desc: 'Nightly sky alerts and event reminders' },
-    { icon: <Gallery size={22} color="#d4c5a0" variant="Bulk" />, title: 'Photos', desc: 'Set a profile photo (optional)' },
+    { icon: <Radar size={22} color="#d4c5a0" variant="Bulk" />, title: t('onboarding.perm.motion_title', 'Motion & Location'), desc: t('onboarding.perm.motion_desc', 'Point your phone at the sky to identify what you see') },
+    { icon: <Star1 size={22} color="#d4c5a0" variant="Bulk" />, title: t('onboarding.perm.notif_title', 'Notifications'), desc: t('onboarding.perm.notif_desc', 'Nightly sky alerts and event reminders') },
+    { icon: <Gallery size={22} color="#d4c5a0" variant="Bulk" />, title: t('onboarding.perm.photos_title', 'Photos'), desc: t('onboarding.perm.photos_desc', 'Set a profile photo (optional)') },
   ];
 
   return (
     <View style={s.step}>
-      <Text style={s.stepTitle}>Enable the experience</Text>
-      <Text style={s.stepSub}>Pie Matrix works best with a few permissions. We'll ask once, now.</Text>
+      <Text style={s.stepTitle}>{t('onboarding.perm.title', 'Set up your experience')}</Text>
+      <Text style={s.stepSub}>{t('onboarding.perm.subtitle', "To bring the night sky to life, Pie Matrix can use a few device features. You're always in control — choose what feels right for you.")}</Text>
 
       <View style={{ gap: 12, marginTop: 20, flex: 1 }}>
         {PERMS.map((p, i) => (
@@ -494,7 +496,7 @@ function PermissionsStep({ onNext }: { onNext: () => void }) {
       </View>
 
       <TouchableOpacity style={[s.primaryBtn, requesting && s.btnDisabled]} onPress={handleEnable} disabled={requesting || done}>
-        <Text style={s.primaryBtnText}>{done ? 'All set' : requesting ? 'Requesting…' : 'Enable & Continue'}</Text>
+        <Text style={s.primaryBtnText}>{done ? t('onboarding.perm.cta_done', 'All set') : requesting ? t('onboarding.perm.cta_busy', 'Requesting…') : t('onboarding.perm.cta', 'Continue')}</Text>
         {!requesting && !done && <ArrowRight2 size={18} color="#030308" variant="Bold" />}
         {done && <TickCircle size={18} color="#030308" variant="Bold" />}
       </TouchableOpacity>
