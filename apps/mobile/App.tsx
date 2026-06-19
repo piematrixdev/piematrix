@@ -44,6 +44,7 @@ import SpaceShooterGame from './src/SpaceShooterGame';
 import EventsScreen from './src/EventsScreen';
 import PolarScopeScreen from './src/PolarScopeScreen';
 import AIChatScreen from './src/AIChatScreen';
+import { fetchFeaturedProducts, Product } from './src/shopify';
 import { scheduleDailySkyNotification, scheduleEventReminders } from './src/notifications/PushNotificationService';
 import * as Notifications from 'expo-notifications';
 import { getTrackingPermissionsAsync, requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
@@ -156,6 +157,9 @@ function AppContent() {
   const manualPosRef = useRef({ azimuth: 180, altitude: 45 });
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const selectedObjectRef = useRef<{ name: string | null; type: string | null }>({ name: null, type: null });
+  // Products for AI chat recommendations (cached once)
+  const [chatProducts, setChatProducts] = useState<Product[]>([]);
+  useEffect(() => { fetchFeaturedProducts(20).then(setChatProducts).catch(() => {}); }, []);
   // Star trail long-exposure simulation
   const [exposureActive, setExposureActive] = useState(false);
   const [exposureProgress, setExposureProgress] = useState(0); // 0–1
@@ -545,12 +549,18 @@ function AppContent() {
   if (currentScreen === 'category' && selectedCategory) return <CategoryScreen collectionHandle={selectedCategory.handle} title={selectedCategory.title} onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} />;
   if (currentScreen === 'shop') return (<View style={{ flex: 1 }}><ShopScreen onClose={() => navigateTo('home')} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} /><BottomTabBar active="shop" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
   if (currentScreen === 'polarscope') return <PolarScopeScreen onClose={goBack} observerLongitude={skyRefs.coords.current.longitude} />;
-  if (currentScreen === 'aichat') return <AIChatScreen onClose={goBack} />;
+  if (currentScreen === 'aichat') return <AIChatScreen
+    onClose={goBack}
+    onNavigate={(screen) => navigateTo(screen as any)}
+    onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }}
+    onSearchObject={(target) => { setSearchTarget(target); recalibrate(); navigateTo('skywatch'); }}
+    products={chatProducts}
+  />;
   if (currentScreen === 'support') return <SupportScreen onClose={goBack} />;
   if (currentScreen === 'feedback') return <FeedbackScreen onClose={goBack} />;
   if (currentScreen === 'events') return <EventsScreen onClose={goBack} />;
   if (currentScreen === 'game') return <SpaceShooterGame onClose={goBack} />;
-  if (currentScreen === 'profile') return (<View style={{ flex: 1 }}><ProfileScreen onClose={() => navigateTo('home')} /><BottomTabBar active="profile" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
+  if (currentScreen === 'profile') return (<View style={{ flex: 1 }}><ProfileScreen onClose={() => navigateTo('home')} onNavigate={(sc) => navigateTo(sc as any)} /><BottomTabBar active="profile" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
 
   // --- Loading / error states ---
   if (sky.error) return <View style={s.center}><Text style={s.err}>{sky.error}</Text></View>;

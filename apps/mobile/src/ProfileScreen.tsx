@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  StatusBar, Alert, TextInput, RefreshControl,
+  StatusBar, Alert, TextInput, RefreshControl, Dimensions,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,10 +25,11 @@ const F_BOLD = 'Poppins-Bold';
 const F_TITLE = 'Poppins-ExtraBold';
 const ACCENT = '#d4c5a0';
 const BG = '#030308';
+const { width: W } = Dimensions.get('window');
 
-interface Props { onClose: () => void; }
+interface Props { onClose: () => void; onNavigate?: (screen: string) => void; }
 
-export default function ProfileScreen({ onClose }: Props) {
+export default function ProfileScreen({ onClose, onNavigate }: Props) {
   const { user, signOut, deleteAccount } = useAuth();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '');
@@ -324,6 +325,30 @@ export default function ProfileScreen({ onClose }: Props) {
           </View>
         </View>
 
+        {/* Features — all app screens grouped */}
+        {onNavigate && (
+          <View style={s.featuresSection}>
+            <Text style={s.featuresTitle}>FEATURES</Text>
+            <View style={s.featuresGrid}>
+              {[
+                { screen: 'skywatch', icon: '🔭', label: 'Sky View' },
+                { screen: 'telescope', icon: '⭐', label: 'Telescope' },
+                { screen: 'aichat', icon: '✨', label: 'Ask Orion' },
+                { screen: 'calendar', icon: '📅', label: 'Calendar' },
+                { screen: 'events', icon: '🌠', label: 'Events' },
+                { screen: 'polarscope', icon: '🧭', label: 'Polar Scope' },
+                { screen: 'shop', icon: '🛒', label: 'Shop' },
+                { screen: 'feedback', icon: '💬', label: 'Feedback' },
+              ].map((item) => (
+                <TouchableOpacity key={item.screen} style={s.featureCard} activeOpacity={0.8} onPress={() => onNavigate(item.screen)}>
+                  <Text style={s.featureEmoji}>{item.icon}</Text>
+                  <Text style={s.featureLabel}>{item.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+        )}
+
         {/* Sign out */}
         <TouchableOpacity style={s.logoutBtn} onPress={logout} activeOpacity={0.8}>
           <Logout size={18} color="#ef4444" variant="Linear" />
@@ -394,6 +419,14 @@ const s = StyleSheet.create({
   toggleOn: { backgroundColor: 'rgba(212,197,160,0.35)' },
   dot: { width: 18, height: 18, borderRadius: 9, backgroundColor: 'rgba(255,255,255,0.35)' },
   dotOn: { backgroundColor: ACCENT, alignSelf: 'flex-end' },
+
+  // Features grid
+  featuresSection: { marginHorizontal: 20, marginTop: 28 },
+  featuresTitle: { color: 'rgba(255,255,255,0.35)', fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 12 },
+  featuresGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 } as any,
+  featureCard: { width: (W - 70) / 4, alignItems: 'center', paddingVertical: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' } as any,
+  featureEmoji: { fontSize: 22, marginBottom: 6 },
+  featureLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: F_REG, textAlign: 'center' },
 
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginHorizontal: 20, marginTop: 32, paddingVertical: 16, borderRadius: 16, backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)' },
   logoutText: { color: '#ef4444', fontSize: 15, fontFamily: F_BOLD },

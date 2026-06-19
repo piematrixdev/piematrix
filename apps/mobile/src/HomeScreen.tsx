@@ -568,67 +568,55 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
             <Text style={s.sectionTitle}>QUICK ACCESS</Text>
           </View>
 
-          {/* Primary — Astronomy tools */}
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('telescope')}>
-            <View style={[s.actionIcon, { backgroundColor: 'rgba(201,184,150,0.12)' }]}>
-              <Star1 size={20} color="#c9b896" variant="Bulk" />
-            </View>
-            <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>{t('home.action.telescope.title', 'Telescope Targets')}</Text>
-              <Text style={s.actionDesc}>
+          {/* Bento grid — quick access cards */}
+          <View style={s.bentoGrid}>
+            {/* Large card — top row full width */}
+            <TouchableOpacity style={[s.bentoCard, s.bentoLarge]} activeOpacity={0.9} onPress={() => onNavigate('telescope')}>
+              <View style={[s.bentoIcon, { backgroundColor: 'rgba(201,184,150,0.15)' }]}>
+                <Star1 size={22} color="#c9b896" variant="Bulk" />
+              </View>
+              <Text style={s.bentoTitle}>{t('home.action.telescope.title', 'Telescope Targets')}</Text>
+              <Text style={s.bentoDesc}>
                 {tonightData && tonightData.deepSky.length > 0
                   ? `${tonightData.deepSky[0].name ?? tonightData.deepSky[0].id} + ${tonightData.deepSky.length - 1} more tonight`
                   : t('home.action.telescope.desc', 'Find objects for your scope')}
               </Text>
-            </View>
-            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
-          </TouchableOpacity>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('events')}>
-            <View style={[s.actionIcon, { backgroundColor: 'rgba(74,222,128,0.12)' }]}>
-              <Calendar size={20} color="#4ade80" variant="Bulk" />
-            </View>
-            <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>Events & Activities</Text>
-              <Text style={s.actionDesc}>Stargazing nights, workshops & more</Text>
-            </View>
-            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
-          </TouchableOpacity>
+            {/* Row 2: two half-width cards */}
+            <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('aichat')}>
+              <View style={[s.bentoIcon, { backgroundColor: 'rgba(212,197,160,0.15)' }]}>
+                <Star1 size={20} color="#d4c5a0" variant="Bold" />
+              </View>
+              <Text style={s.bentoTitle}>Ask Orion</Text>
+              <Text style={s.bentoDesc}>AI sky assistant</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('aichat')}>
-            <View style={[s.actionIcon, { backgroundColor: 'rgba(212,197,160,0.12)' }]}>
-              <Star1 size={20} color="#d4c5a0" variant="Bold" />
-            </View>
-            <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>Ask Orion</Text>
-              <Text style={s.actionDesc}>AI assistant — telescopes, sky tips & more</Text>
-            </View>
-            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
-          </TouchableOpacity>
+            <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('events')}>
+              <View style={[s.bentoIcon, { backgroundColor: 'rgba(74,222,128,0.15)' }]}>
+                <Calendar size={20} color="#4ade80" variant="Bulk" />
+              </View>
+              <Text style={s.bentoTitle}>Events</Text>
+              <Text style={s.bentoDesc}>Workshops & nights</Text>
+            </TouchableOpacity>
 
-          {/* Secondary — Commerce */}
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('shop')}>
-            <View style={[s.actionIcon, { backgroundColor: 'rgba(245,158,11,0.12)' }]}>
-              <ShoppingBag size={20} color="#f59e0b" variant="Bulk" />
-            </View>
-            <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>{t('home.action.shop.title', 'Shop Equipment')}</Text>
-              <Text style={s.actionDesc}>{t('home.action.shop.desc', 'Telescopes, binoculars & accessories')}</Text>
-            </View>
-            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
-          </TouchableOpacity>
+            {/* Row 3: two half-width cards */}
+            <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('shop')}>
+              <View style={[s.bentoIcon, { backgroundColor: 'rgba(245,158,11,0.15)' }]}>
+                <ShoppingBag size={20} color="#f59e0b" variant="Bulk" />
+              </View>
+              <Text style={s.bentoTitle}>Shop</Text>
+              <Text style={s.bentoDesc}>Telescopes & gear</Text>
+            </TouchableOpacity>
 
-          {/* Tertiary — Support */}
-          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('feedback')}>
-            <View style={[s.actionIcon, { backgroundColor: 'rgba(96,165,250,0.12)' }]}>
-              <MessageText1 size={20} color="#60a5fa" variant="Bulk" />
-            </View>
-            <View style={s.actionInfo}>
-              <Text style={s.actionTitle}>{t('home.action.feedback.title', 'Support & Feedback')}</Text>
-              <Text style={s.actionDesc}>{t('home.action.feedback.desc', 'Get help or share your thoughts')}</Text>
-            </View>
-            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
-          </TouchableOpacity>
+            <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('feedback')}>
+              <View style={[s.bentoIcon, { backgroundColor: 'rgba(96,165,250,0.15)' }]}>
+                <MessageText1 size={20} color="#60a5fa" variant="Bulk" />
+              </View>
+              <Text style={s.bentoTitle}>Support</Text>
+              <Text style={s.bentoDesc}>Help & feedback</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Footer — seamless marquee */}
@@ -873,6 +861,14 @@ const s = StyleSheet.create({
     width: 40, height: 40, borderRadius: 12,
     justifyContent: 'center', alignItems: 'center',
   },
+  // Bento grid
+  bentoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10, marginTop: 4, marginBottom: 10 } as any,
+  bentoCard: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', justifyContent: 'flex-start' } as any,
+  bentoLarge: { width: '100%', paddingVertical: 20 } as any,
+  bentoHalf: { width: (W - 50) / 2 } as any,
+  bentoIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
+  bentoTitle: { color: '#fff', fontSize: 15, fontFamily: F_SEMIBOLD, marginBottom: 3 },
+  bentoDesc: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: F_LIGHT, lineHeight: 16 },
 
   // Sky Calendar strip
   calSection: { marginBottom: 28 },
