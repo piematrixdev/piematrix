@@ -58,7 +58,7 @@ const FALLBACK_BANNERS: PromoBanner[] = [
 ];
 
 interface HomeScreenProps {
-  onNavigate: (screen: 'skywatch' | 'shop' | 'support' | 'calendar' | 'telescope' | 'profile' | 'feedback' | 'game' | 'events') => void;
+  onNavigate: (screen: 'skywatch' | 'shop' | 'support' | 'calendar' | 'telescope' | 'profile' | 'feedback' | 'game' | 'events' | 'aichat') => void;
   onProductSelect?: (handle: string) => void;
   onCategorySelect?: (handle: string, title: string) => void;
   onSearchObject?: (target: { name: string; azimuth: number; altitude: number }) => void;
@@ -591,6 +591,17 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
             <View style={s.actionInfo}>
               <Text style={s.actionTitle}>Events & Activities</Text>
               <Text style={s.actionDesc}>Stargazing nights, workshops & more</Text>
+            </View>
+            <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
+          </TouchableOpacity>
+
+          <TouchableOpacity style={s.actionCard} activeOpacity={0.9} onPress={() => onNavigate('aichat')}>
+            <View style={[s.actionIcon, { backgroundColor: 'rgba(212,197,160,0.12)' }]}>
+              <Star1 size={20} color="#d4c5a0" variant="Bold" />
+            </View>
+            <View style={s.actionInfo}>
+              <Text style={s.actionTitle}>Ask Orion</Text>
+              <Text style={s.actionDesc}>AI assistant — telescopes, sky tips & more</Text>
             </View>
             <ArrowRight2 size={16} color="rgba(255,255,255,0.3)" variant="Linear" />
           </TouchableOpacity>

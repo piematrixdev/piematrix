@@ -43,6 +43,7 @@ import FeedbackScreen from './src/FeedbackScreen';
 import SpaceShooterGame from './src/SpaceShooterGame';
 import EventsScreen from './src/EventsScreen';
 import PolarScopeScreen from './src/PolarScopeScreen';
+import AIChatScreen from './src/AIChatScreen';
 import { scheduleDailySkyNotification, scheduleEventReminders } from './src/notifications/PushNotificationService';
 import * as Notifications from 'expo-notifications';
 import { getTrackingPermissionsAsync, requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
@@ -67,7 +68,7 @@ const BORTLE_MAG: Record<number, number> = {
   1: 7.6, 2: 7.1, 3: 6.6, 4: 6.2, 5: 5.6, 6: 5.1, 7: 4.6, 8: 4.1, 9: 3.5,
 };
 
-type Screen = 'home' | 'skywatch' | 'shop' | 'support' | 'product' | 'calendar' | 'telescope' | 'category' | 'profile' | 'feedback' | 'game' | 'events' | 'polarscope';
+type Screen = 'home' | 'skywatch' | 'shop' | 'support' | 'product' | 'calendar' | 'telescope' | 'category' | 'profile' | 'feedback' | 'game' | 'events' | 'polarscope' | 'aichat';
 
 // ─── Main App Content ────────────────────────────────────────────────────────
 
@@ -544,6 +545,7 @@ function AppContent() {
   if (currentScreen === 'category' && selectedCategory) return <CategoryScreen collectionHandle={selectedCategory.handle} title={selectedCategory.title} onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} />;
   if (currentScreen === 'shop') return (<View style={{ flex: 1 }}><ShopScreen onClose={() => navigateTo('home')} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} /><BottomTabBar active="shop" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
   if (currentScreen === 'polarscope') return <PolarScopeScreen onClose={goBack} observerLongitude={skyRefs.coords.current.longitude} />;
+  if (currentScreen === 'aichat') return <AIChatScreen onClose={goBack} />;
   if (currentScreen === 'support') return <SupportScreen onClose={goBack} />;
   if (currentScreen === 'feedback') return <FeedbackScreen onClose={goBack} />;
   if (currentScreen === 'events') return <EventsScreen onClose={goBack} />;
