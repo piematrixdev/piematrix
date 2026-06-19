@@ -74,7 +74,7 @@ export function useTouchGestures({ arMode, fovRef, onFovChange, onPan, onTap, on
           onCameraFovChangeRef.current?.(rounded);
         } else {
           const currentFov = fovRef.current;
-          const newFov = Math.max(0.5, Math.min(180, currentFov * scale));
+          const newFov = Math.max(0.25, Math.min(180, currentFov * scale));
           const rounded = Math.round(newFov * 10) / 10;
           fovRef.current = rounded;
           onFovChangeRef.current(rounded);

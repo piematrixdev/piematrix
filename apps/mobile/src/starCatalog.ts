@@ -49,8 +49,10 @@ const TIERS: TierDef[] = [
 // Cache of decoded stars per tier so we never re-read a file.
 const tierCache = new Map<string, Star[]>();
 
-/** Decode one tier's binary buffer into Star[] (RA stored in HOURS for the renderer). */
-function decodeTier(bytes: Uint8Array, tierKey: string): Star[] {
+/** Decode one tier's binary buffer into Star[] (RA stored in HOURS for the renderer).
+ *  Chunked + async: yields to the JS thread periodically so a large tier
+ *  (100k+ stars) decodes without freezing touch / hanging the sky. */
+async function decodeTier(bytes: Uint8Array, tierKey: string): Promise<Star[]> {
   // Ensure correct byte alignment for the DataView.
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const n = Math.floor(bytes.byteLength / REC_BYTES);
@@ -69,6 +71,10 @@ function decodeTier(bytes: Uint8Array, tierKey: string): Star[] {
       magnitude: mag,
       spectralType: (SPEC[spec] ?? 'G') as any,
     };
+    // Yield every 16384 records so the UI thread (touch, rendering) stays live.
+    if ((i & 16383) === 16383) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    }
   }
   return stars;
 }
@@ -85,7 +91,7 @@ async function loadTier(tierKey: string): Promise<Star[]> {
 
   const b64 = await readAsStringAsync(uri, { encoding: EncodingType.Base64 });
   const bytes = Buffer.from(b64, 'base64');
-  const stars = decodeTier(bytes, tierKey);
+  const stars = await decodeTier(bytes, tierKey);
   tierCache.set(tierKey, stars);
   return stars;
 }

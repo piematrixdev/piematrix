@@ -701,6 +701,10 @@ interface Props {
    *  used in camera mode to match the live preview. Falls back to a calibrated
    *  default when the native value is unavailable. */
   cameraFovDeg?: number;
+  /** Star trail long-exposure mode — accumulates trail geometry while active. */
+  exposureMode?: boolean;
+  /** Progress callback 0–1 for the exposure duration. */
+  onExposureProgress?: (p: number) => void;
   /** Selected ground texture id (see grounds.ts) */
   groundId?: string;
   /** Currently selected object ref (for showing orbital path — bypasses React render) */
@@ -1099,12 +1103,11 @@ function SkyRendererImpl(props: Props) {
           // so they pop with a strong halo at any zoom level.
           float zoomScale = 60.0 / max(uFov, 5.0);
           zoomScale = clamp(zoomScale, 0.7, 3.0);
-          // brightBoost: a gentle extra size for the brightest stars so they
-          // still pop, but kept small so the magnitude→size range stays
-          // compressed and balanced (Stellarium-like) rather than letting the
-          // brightest stars dwarf everything. Up to ~1.35× for mag ≤ 1.
-          float brightFactor = clamp((1.5 - mag) * 0.4, 0.0, 1.0);
-          float brightBoost = 1.0 + brightFactor * 0.35;
+          // brightBoost: extra size for stars brighter than ~mag 2.5, so named
+          // stars like Alpha Centauri (mag 0) and Polaris (mag 2) are clearly
+          // bigger than the faint field. Up to ~1.9× for the brightest.
+          float brightFactor = clamp((2.5 - mag) * 0.25, 0.0, 1.0);
+          float brightBoost = 1.0 + brightFactor * 0.9;
           float ptSize = size * uDpr * zoomScale * brightBoost * 1.1;
           // Wide clamp range so brightness ratio survives at all zooms.
           gl_PointSize = clamp(ptSize, 1.0, 50.0);
@@ -1211,12 +1214,13 @@ function SkyRendererImpl(props: Props) {
     const constVertShader = `
       attribute float aConst;
       uniform float uWinner;
+      uniform float uWinner2;
       varying float vWorldY;
       varying float vWin;
       void main() {
         vec4 worldPos = modelMatrix * vec4(position, 1.0);
         vWorldY = worldPos.y;
-        vWin = (abs(aConst - uWinner) < 0.5) ? 1.0 : 0.0;
+        vWin = (abs(aConst - uWinner) < 0.5 || abs(aConst - uWinner2) < 0.5) ? 1.0 : 0.0;
         gl_Position = projectionMatrix * viewMatrix * worldPos;
       }
     `;
@@ -1249,6 +1253,7 @@ function SkyRendererImpl(props: Props) {
         uOpacity: { value: 0.6 },
         uClipHorizon: { value: 1.0 },
         uWinner: { value: -1 },
+        uWinner2: { value: -1 },
         uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
@@ -1267,6 +1272,7 @@ function SkyRendererImpl(props: Props) {
         uOpacity: { value: 0.5 },
         uClipHorizon: { value: 1.0 },
         uWinner: { value: -1 },
+        uWinner2: { value: -1 },
         uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
@@ -1285,6 +1291,7 @@ function SkyRendererImpl(props: Props) {
         uOpacity: { value: 0.4 },
         uClipHorizon: { value: 1.0 },
         uWinner: { value: -1 },
+        uWinner2: { value: -1 },
         uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
@@ -1303,6 +1310,7 @@ function SkyRendererImpl(props: Props) {
         uOpacity: { value: 1.0 },
         uClipHorizon: { value: 1.0 },
         uWinner: { value: -1 },
+        uWinner2: { value: -1 },
         uReveal: { value: 0 },
       },
       vertexShader: constVertShader,
@@ -1494,18 +1502,45 @@ function SkyRendererImpl(props: Props) {
             return [x / len * artRadius, y / len * artRadius, z / len * artRadius] as [number, number, number];
           });
 
-          // Custom geometry from the 4 corner positions
+          // Build a subdivided grid mesh so the illustration conforms to the
+          // sphere's curvature. Large constellations (Hydra, 66°+ span) are
+          // severely distorted by a flat 2-triangle quad because it cuts through
+          // the sphere; a grid of NxN cells with each vertex projected onto the
+          // sphere surface wraps correctly.
+          const SUB = 12; // grid subdivisions per axis
+          const vCount = (SUB + 1) * (SUB + 1);
+          const posArr = new Float32Array(vCount * 3);
+          const uvArr = new Float32Array(vCount * 2);
+          for (let iy = 0; iy <= SUB; iy++) {
+            for (let ix = 0; ix <= SUB; ix++) {
+              const u = ix / SUB;
+              const v = iy / SUB;
+              const px = u * imgW;
+              const py = v * imgH;
+              const [x, y, z] = mapPixel!(px, py);
+              const len = Math.sqrt(x * x + y * y + z * z) || 1;
+              const idx = iy * (SUB + 1) + ix;
+              posArr[idx * 3] = x / len * artRadius;
+              posArr[idx * 3 + 1] = y / len * artRadius;
+              posArr[idx * 3 + 2] = z / len * artRadius;
+              uvArr[idx * 2] = u;
+              uvArr[idx * 2 + 1] = 1 - v; // flip V (image y=0 is top)
+            }
+          }
+          const indices: number[] = [];
+          for (let iy = 0; iy < SUB; iy++) {
+            for (let ix = 0; ix < SUB; ix++) {
+              const a = iy * (SUB + 1) + ix;
+              const b = a + 1;
+              const c = a + (SUB + 1);
+              const d = c + 1;
+              indices.push(a, b, c, b, d, c);
+            }
+          }
           const geo = new THREE.BufferGeometry();
-          const positions = new Float32Array([
-            ...c3d[0], ...c3d[1], ...c3d[2],
-            ...c3d[0], ...c3d[2], ...c3d[3],
-          ]);
-          const uvs = new Float32Array([
-            0, 1, 1, 1, 1, 0,
-            0, 1, 1, 0, 0, 0,
-          ]);
-          geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-          geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+          geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
+          geo.setAttribute('uv', new THREE.BufferAttribute(uvArr, 2));
+          geo.setIndex(indices);
 
           const mesh = new THREE.Mesh(
             geo,
@@ -1550,7 +1585,7 @@ function SkyRendererImpl(props: Props) {
     const ART_FADE_IN = 0.015;   // ~1s fade in at 60fps
     const ART_FADE_OUT = 0.04;   // ~0.4s fade out
     const ART_MAX_OPACITY = 0.22;
-    const ART_DOT_THRESHOLD = 0.94;  // ~20° cone — only what's actually centered
+    const ART_DOT_THRESHOLD = 0.86;  // ~30° cone — wide enough for large constellations like Hydra
 
     // Track per-entry current opacity for independent fade-in/out animations
     const artOpacities: number[] = [];
@@ -1578,12 +1613,15 @@ function SkyRendererImpl(props: Props) {
       const fwd = artFwd;
       let anyVisible = false;
 
-      // First pass: find the SINGLE constellation whose center is closest to
-      // the screen centre (largest dot with the camera forward vector). Only
-      // that one is allowed to show — this prevents 2-3 overlapping figures
-      // from appearing at once when several centres fall inside the cone.
+      // First pass: find the TWO best constellations whose centers are closest
+      // to the screen centre (largest dot with the camera forward vector).
+      // Allowing two prevents a large constellation like Hydra (whose center is
+      // far from any single viewing point) from being permanently blocked by a
+      // smaller neighbour.
       let bestIdx = -1;
       let bestDot = ART_DOT_THRESHOLD;
+      let secondIdx = -1;
+      let secondDot = ART_DOT_THRESHOLD;
       if (showConst && haveArt) {
         for (let i = 0; i < constArtEntries.length; i++) {
           const e = constArtEntries[i];
@@ -1595,16 +1633,20 @@ function SkyRendererImpl(props: Props) {
           if (clipBelow && !aboveHorizon) continue;
           const dot = fwd.dot(artTmp);
           if (dot > bestDot) {
+            secondIdx = bestIdx; secondDot = bestDot;
             bestDot = dot;
             bestIdx = i;
+          } else if (dot > secondDot) {
+            secondDot = dot;
+            secondIdx = i;
           }
         }
       }
 
-      // Second pass: fade in only the winner, fade everyone else out.
+      // Second pass: fade in the top two, fade everyone else out.
       for (let i = 0; i < constArtEntries.length; i++) {
         const e = constArtEntries[i];
-        const wantVisible = i === bestIdx;
+        const wantVisible = i === bestIdx || i === secondIdx;
 
         const cur = artOpacities[i];
         let next = cur;
@@ -1626,11 +1668,14 @@ function SkyRendererImpl(props: Props) {
         }
       }
 
-      // Constellation LINES: reveal only the constellation closest to screen
-      // centre, fading in/out exactly like the art (single figure at a time).
+      // Constellation LINES: reveal the TWO constellations closest to screen
+      // centre, fading in/out like the art (handles large constellations that
+      // span the boundary between two neighbours).
       const centers = lineCentersRef.current;
       let lineBest = -1;
       let lineBestDot = ART_DOT_THRESHOLD;
+      let lineSecond = -1;
+      let lineSecondDot = ART_DOT_THRESHOLD;
       if (showConst && centers.length) {
         for (let i = 0; i < centers.length; i++) {
           const cdir = centers[i];
@@ -1639,30 +1684,30 @@ function SkyRendererImpl(props: Props) {
           artTmp.normalize();
           if (clipBelow && artTmp.y <= -0.05) continue;
           const dot = fwd.dot(artTmp);
-          if (dot > lineBestDot) { lineBestDot = dot; lineBest = i; }
+          if (dot > lineBestDot) {
+            lineSecond = lineBest; lineSecondDot = lineBestDot;
+            lineBestDot = dot; lineBest = i;
+          } else if (dot > lineSecondDot) {
+            lineSecondDot = dot; lineSecond = i;
+          }
         }
       }
-      // Cross-fade: if the centred constellation changed, fade the current one
-      // out first, then switch and fade the new one in.
-      if (lineBest !== lineWinner) {
-        lineReveal = Math.max(0, lineReveal - ART_FADE_OUT);
-        if (lineReveal <= 0.001) lineWinner = lineBest;
-      } else {
-        const target = lineWinner >= 0 ? 1 : 0;
-        lineReveal = target > lineReveal
-          ? Math.min(target, lineReveal + ART_FADE_IN)
-          : Math.max(target, lineReveal - ART_FADE_OUT);
-      }
+      // Simplified reveal: just set the two winners directly (instant reveal for
+      // lines — they complement the smoothly-fading art). No cross-fade needed
+      // since two are always showing and they swap naturally as you pan.
+      lineWinner = lineBest;
+      lineReveal = (lineBest >= 0 || lineSecond >= 0) ? 1.0 : 0.0;
       const lineMats = [
         constLinesRef.current?.material,
         constGlowRef.current?.material,
         constGlow2Ref.current?.material,
         constGlow3Ref.current?.material,
       ] as Array<THREE.ShaderMaterial | undefined>;
-      const lineVisible = lineReveal > 0.001 && lineWinner >= 0;
+      const lineVisible = lineReveal > 0.001;
       for (const m of lineMats) {
         if (!m || !m.uniforms) continue;
-        m.uniforms.uWinner.value = lineWinner;
+        m.uniforms.uWinner.value = lineBest;
+        m.uniforms.uWinner2.value = lineSecond;
         m.uniforms.uReveal.value = lineReveal;
       }
       if (constLinesRef.current) constLinesRef.current.visible = lineVisible;
@@ -1808,7 +1853,7 @@ function SkyRendererImpl(props: Props) {
     // sky gradient overlaps the ground fade zone — no hard seam.
     const skyGeo = new THREE.SphereGeometry(R + 5, 48, 28, 0, Math.PI * 2, 0, Math.PI / 2 + 0.15);
     const skyMat = new THREE.ShaderMaterial({
-      uniforms: { sunAlt: { value: 0.0 } },
+      uniforms: { sunAlt: { value: 0.0 }, uLightPollution: { value: 0.0 } },
       vertexShader: `
         varying vec3 vWorldPos;
         void main() {
@@ -1818,14 +1863,21 @@ function SkyRendererImpl(props: Props) {
       `,
       fragmentShader: `
         uniform float sunAlt;
+        uniform float uLightPollution; // 0 = pristine dark, 1 = heavy city glow
         varying vec3 vWorldPos;
         void main() {
           float rawH = normalize(vWorldPos).y;
           float h = clamp(rawH, 0.0, 1.0);
 
-          // Night: deep black with very subtle blue-grey at horizon (airglow)
-          vec3 nZ = vec3(0.003, 0.003, 0.006);
-          vec3 nH = vec3(0.015, 0.014, 0.018);
+          // Night: add light-pollution glow — warm grey/amber dome that's
+          // brightest near the horizon and fades toward the zenith. This is
+          // what makes a Bortle 5 sky look different from a Bortle 1 sky:
+          // the sky itself isn't pure black but has a faint, warm haze.
+          float lpHorizon = uLightPollution * 0.35;  // horizon glow intensity
+          float lpZenith  = uLightPollution * 0.08;  // zenith brightness
+          vec3 lpColor = vec3(0.18, 0.12, 0.08);     // warm brownish-amber
+          vec3 nZ = vec3(0.003, 0.003, 0.006) + lpColor * lpZenith;
+          vec3 nH = vec3(0.015, 0.014, 0.018) + lpColor * lpHorizon;
 
           // Civil twilight: deep indigo zenith, warm amber/peach horizon
           vec3 tZ = vec3(0.015, 0.015, 0.045);
@@ -2071,7 +2123,7 @@ function SkyRendererImpl(props: Props) {
         // Bump map: cheap normal perturbation → crater relief that catches the
         // light along the terminator.
         moonSphereMat.bumpMap = dsp;
-        moonSphereMat.bumpScale = 1.2;
+        moonSphereMat.bumpScale = 10.0;
         // Displacement map: actual geometric relief (subtle — real lunar relief
         // is tiny relative to the radius). Needs the subdivided sphere above.
         // ldem_3_8bit is a real Lunar DEM (elevation) map.
@@ -2246,9 +2298,40 @@ function SkyRendererImpl(props: Props) {
     const TMP_OBJ = new THREE.Object3D();
     const TMP_EULER = new THREE.Euler();
     const TMP_PROJ = new THREE.Vector3(); // label center-fade projection
+
+    // --- Star Trail (long-exposure simulation) ---
+    // Accumulates line segments as the sky rotates, creating arcs around the
+    // celestial poles — like a real long-exposure photograph. Trails grow while
+    // `exposureMode` is on and persist until it's toggled off.
+    const TRAIL_MAX_VERTS = 2000000; // ~1M trail segments (handles all visible stars)
+    const TRAIL_DURATION = 30; // seconds of simulated exposure (sidereal time advances)
+    const trailPos = new Float32Array(TRAIL_MAX_VERTS * 3);
+    const trailCol = new Float32Array(TRAIL_MAX_VERTS * 3);
+    const trailGeo = new THREE.BufferGeometry();
+    trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+    trailGeo.setAttribute('color', new THREE.BufferAttribute(trailCol, 3));
+    trailGeo.setDrawRange(0, 0);
+    const trailMat = new THREE.LineBasicMaterial({
+      vertexColors: true, transparent: true, opacity: 0.9,
+      blending: THREE.AdditiveBlending, depthTest: false, depthWrite: false,
+      linewidth: 2, // note: may not work on all devices (WebGL limitation)
+    });
+    const trailLine = new THREE.LineSegments(trailGeo, trailMat);
+    trailLine.renderOrder = 5;
+    trailLine.visible = false;
+    trailLine.frustumCulled = false;
+    scene.add(trailLine);
+    let trailVertCount = 0;
+    let trailStartTime = 0;
+    let trailLastSample = 0;
+    let trailWasActive = false;
+    // Previous star world positions (for drawing segments from prev → current)
+    let prevStarWorldPos: Float32Array | null = null;
+
     const animate = () => {
       frameRef.current = requestAnimationFrame(animate);
       const p = propsRef.current;
+      const exposureOn = !!p.exposureMode;
       const c = camRef.current;
       if (!c || !rendererRef.current || !sceneRef.current) return;
 
@@ -2317,7 +2400,16 @@ function SkyRendererImpl(props: Props) {
       // Rotate the sky group by LST and latitude
       // Maps equatorial coordinates → horizontal frame correctly.
       // See applySkyRotation for derivation.
-      const lstRad = p.lst * 15 * Math.PI / 180;
+      // During star-trail exposure, accelerate time so the sky visibly rotates
+      // (real sidereal rate is only ~0.004°/s — invisible in 30s). We simulate
+      // ~3 hours of rotation over the TRAIL_DURATION, making arcs clearly visible.
+      let lstRad = p.lst * 15 * Math.PI / 180;
+      if (exposureOn && trailStartTime > 0) {
+        const elapsed = (Date.now() - trailStartTime) / 1000;
+        // 3 hours of sidereal rotation = 45° = 0.785 rad, spread over TRAIL_DURATION.
+        const extraRad = (elapsed / TRAIL_DURATION) * (Math.PI / 4);
+        lstRad += extraRad;
+      }
       const latRad = p.observerLatitude * Math.PI / 180;
       applySkyRotation(skyGroupRef.current!, latRad, lstRad);
 
@@ -2396,6 +2488,10 @@ function SkyRendererImpl(props: Props) {
         rebuildLines(p);
         updateCelestials(p, c);
         skyMat.uniforms.sunAlt.value = p.sunAltitude;
+        // Light pollution: map Bortle scale (via limMag) to a 0–1 glow.
+        // Bortle 1 (limMag 7.6) → 0 (pristine), Bortle 9 (limMag 3.5) → 1 (city).
+        const lp = Math.max(0, Math.min(1, (7.6 - (p.limitingMag ?? 5.6)) / 4.1));
+        skyMat.uniforms.uLightPollution.value = lp;
         groundOverlayMat.uniforms.sunAlt.value = p.sunAltitude;
       } else if (fovChanged) {
         // Don't rebuild labels mid-zoom — the 200 ms heartbeat below picks
@@ -2513,6 +2609,95 @@ function SkyRendererImpl(props: Props) {
       // Show only the constellation art closest to screen center
       updateConstArtVisibility(c);
 
+      // --- Star Trail accumulation ---
+      // (exposureOn declared early — also used by the LST accelerator above)
+      if (exposureOn && !trailWasActive) {
+        // Just started: reset trails
+        trailVertCount = 0;
+        trailGeo.setDrawRange(0, 0);
+        trailStartTime = Date.now();
+        trailLastSample = 0;
+        prevStarWorldPos = null;
+        trailLine.visible = true;
+      }
+      if (!exposureOn && trailWasActive) {
+        // Just stopped: clear trails and hide
+        trailVertCount = 0;
+        trailGeo.setDrawRange(0, 0);
+        trailLine.visible = false;
+        prevStarWorldPos = null;
+      }
+      trailWasActive = exposureOn;
+
+      if (exposureOn && starPtsRef.current && skyGroupRef.current) {
+        // Force world matrix update so positions match the current (accelerated) rotation.
+        skyGroupRef.current.updateMatrixWorld(true);
+        const elapsed = (Date.now() - trailStartTime) / 1000;
+        const progress = Math.min(1, elapsed / TRAIL_DURATION);
+        p.onExposureProgress?.(progress);
+
+        // Sample every ~100ms for smooth trails without overwhelming the buffer
+        if (elapsed - trailLastSample > 0.1 && trailVertCount + 2000 < TRAIL_MAX_VERTS) {
+          trailLastSample = elapsed;
+          const starGeo = starPtsRef.current.geometry;
+          const posAttr = starGeo.getAttribute('position');
+          const magAttr = starGeo.getAttribute('mag');
+          const colAttr = starGeo.getAttribute('color');
+          const count = starGeo.drawRange.count;
+          const worldMat = skyGroupRef.current.matrixWorld;
+          const v = new THREE.Vector3();
+
+          // Sample ALL visible stars for trails (up to the buffer limit)
+          const sampleCount = Math.min(count, 16000);
+          const newWorldPos = new Float32Array(sampleCount * 3);
+
+          for (let i = 0; i < sampleCount && trailVertCount + 2 < TRAIL_MAX_VERTS; i++) {
+            const mag = magAttr.getX(i);
+            if (mag > 6.5) continue; // all naked-eye visible stars
+            v.set(posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i));
+            v.applyMatrix4(worldMat);
+            // Push trails to R+8 so they render in front of the sky dome (R+5)
+            // and stars (R). Normalize to unit then scale.
+            const vLen = v.length() || 1;
+            v.multiplyScalar((R + 8) / vLen);
+            newWorldPos[i * 3] = v.x;
+            newWorldPos[i * 3 + 1] = v.y;
+            newWorldPos[i * 3 + 2] = v.z;
+
+            if (prevStarWorldPos) {
+              const px = prevStarWorldPos[i * 3];
+              const py = prevStarWorldPos[i * 3 + 1];
+              const pz = prevStarWorldPos[i * 3 + 2];
+              // Only draw if the star actually moved (sky rotated)
+              const dx = v.x - px, dy = v.y - py, dz = v.z - pz;
+              if (dx * dx + dy * dy + dz * dz > 0.0001) {
+                const ci3 = trailVertCount * 3;
+                // prev point
+                trailPos[ci3] = px; trailPos[ci3 + 1] = py; trailPos[ci3 + 2] = pz;
+                // current point
+                trailPos[ci3 + 3] = v.x; trailPos[ci3 + 4] = v.y; trailPos[ci3 + 5] = v.z;
+                // Color from the star
+                const r = colAttr.getX(i), g = colAttr.getY(i), b = colAttr.getZ(i);
+                const fade = 0.4 + 0.6 * (1 - mag / 4.5); // brighter stars = brighter trails
+                trailCol[ci3] = r * fade; trailCol[ci3 + 1] = g * fade; trailCol[ci3 + 2] = b * fade;
+                trailCol[ci3 + 3] = r * fade; trailCol[ci3 + 4] = g * fade; trailCol[ci3 + 5] = b * fade;
+                trailVertCount += 2;
+              }
+            }
+          }
+          prevStarWorldPos = newWorldPos;
+          (trailGeo.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+          (trailGeo.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+          trailGeo.setDrawRange(0, trailVertCount);
+        }
+
+        // Auto-stop after duration
+        if (progress >= 1) {
+          // Don't set the prop from inside the loop — just signal completion
+          p.onExposureProgress?.(1);
+        }
+      }
+
       rendererRef.current.render(sceneRef.current, c);
       // Update red mode filter
       redFilterMat.uniforms.uEnabled.value = p.redMode ? 1.0 : 0.0;
@@ -2598,21 +2783,18 @@ function SkyRendererImpl(props: Props) {
       // faint stars stay visibly dimmer while the brightest still stand out.
       const flux = Math.pow(2.512, 5 - mag);
 
-      // Alpha — brighter overall so faint naked-eye stars stay clearly
-      // visible (the previous curve dimmed them too far in the name of
-      // realism). Higher floor + gain; still capped at 1.0 for the brightest.
-      // Mag -1.5 → 1.0, Mag 0 → 1.0, Mag 2 → ~0.9, Mag 5 → 0.6, Mag 6.5 → 0.5.
-      const luminance = Math.min(1.0, 0.44 + Math.pow(flux, 0.35) * 0.22);
+      // Alpha — bright stars near full white, faint stars fade to dim so the
+      // background field doesn't compete with the named constellations.
+      // Mag -1.5 → 1.0, Mag 0 → 0.95, Mag 2 → 0.75, Mag 4 → 0.5, Mag 6.5 → 0.32
+      const luminance = Math.min(1.0, 0.25 + Math.pow(flux, 0.3) * 0.28);
       buf.lums[i] = luminance;
 
-      // Radius — larger across the board so stars read as crisp points rather
-      // than near-invisible specks, while keeping the steep bright-vs-faint
-      // Size (CPU-side base radius). Stellarium uses a COMPRESSED magnitude→
-      // size range: bright stars are only a few × bigger than faint ones, not
-      // 10×+. A gentle exponent (0.28) plus a higher floor keeps faint stars
-      // clearly visible while preventing bright stars from ballooning.
-      // Mag -1.5 → ~4.1, Mag 0 → ~3.1, Mag 2 → ~2.3, Mag 5 → ~1.65, Mag 6.5 → ~1.5
-      const radius = 1.15 + Math.pow(flux, 0.28) * 0.55;
+      // Size (CPU-side base radius). Flux^0.4 spreads the bright end strongly so
+      // brighter stars are clearly, progressively larger (not a uniform field).
+      // Faint floor kept low so the background field reads as tiny dots, giving
+      // named bright stars much more visual dominance.
+      // Mag -1.5 → ~15.5, Mag 0 → ~9.7, Mag 1 → ~7.2, Mag 2 → ~5.2, Mag 4 → ~2.0, Mag 6.5 → ~0.85
+      const radius = 0.55 + Math.pow(flux, 0.4) * 1.4;
       buf.sizes[i] = radius;
 
       buf.seeds[i] = Math.abs(Math.sin(x * 12.9898 + y * 78.233 + z * 45.164)) % 1.0;
@@ -3288,7 +3470,7 @@ function SkyRendererImpl(props: Props) {
       // larger than life (~1.0° across) so it reads clearly as the Moon and
       // stays well bigger than the star-like planets, while still growing into
       // a detailed body as you zoom in.
-      const MOON_ANG_RADIUS_ARCSEC = 1850;
+      const MOON_ANG_RADIUS_ARCSEC = 2300;
       const realRadius = MOON_ANG_RADIUS_ARCSEC * arcsecToWorld;
       const minWorld = (1.5 / minScreenDim) * (currentFov * Math.PI / 180) * CR;
       // Below-horizon fade scale (gentle shrink as it sets)
@@ -3553,7 +3735,8 @@ function propsEqual(a: Props, b: Props): boolean {
     a.selectedConstellationId !== b.selectedConstellationId ||
     a.observerLatitude !== b.observerLatitude ||
     a.cameraMode !== b.cameraMode ||
-    a.cameraFovDeg !== b.cameraFovDeg
+    a.cameraFovDeg !== b.cameraFovDeg ||
+    a.exposureMode !== b.exposureMode
   ) {
     return false;
   }

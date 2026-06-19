@@ -49,7 +49,10 @@ export function effectiveLimitingMagnitude(fov: number, nakedEyeMag: number): nu
   const refFov = 60; // natural unaided field of view
   if (fov >= refFov) return nakedEyeMag;
   const aidedBonus = Math.min(5.0, Math.log2(refFov / Math.max(fov, 1)) * 1.0);
-  return Math.min(12.0, nakedEyeMag + aidedBonus);
+  // Cap at 10.0: matches the full L2 tier we preload (192k stars). Going higher
+  // would pull the 646k-star L3 tier, too many to render on a phone and far too
+  // faint to read; staying at 10 means zoom reveals stars with no reload hitch.
+  return Math.min(10.0, nakedEyeMag + aidedBonus);
 }
 
 /** Internal: load up to targetMag from the offline catalog, with fallback. */
@@ -79,13 +82,23 @@ export async function loadStarsProgressively(
     onStars(bright, `${bright.length} bright stars`);
   }
 
-  // Phase 2: naked-eye stars (mag ≤ 6.5) — this is the default ceiling.
-  // 16k stars renders smoothly on all devices. More loads on zoom.
+  // Phase 2: naked-eye stars (mag ≤ 6.5) — quick, gives a full sky fast.
   const medium = await fetchUpToMagnitude(6.5);
   if (medium.length > bright.length) {
     cachedStars = medium;
     loadedMagnitude = 6.5;
     onStars(medium, `${medium.length} stars`);
+  }
+
+  // Phase 3: full deep catalog (mag ≤ 10 — the entire L2 tier, ~192k stars).
+  // Decoded in chunks (see starCatalog) so it never blocks touch. Loading it
+  // up front means deep zoom reveals fainter stars instantly with no reload
+  // hitch, and the renderer's per-FOV magnitude clip keeps the wide view clean.
+  const deep = await fetchUpToMagnitude(10.0);
+  if (deep.length > medium.length) {
+    cachedStars = deep;
+    loadedMagnitude = 10.0;
+    onStars(deep, `${deep.length} stars`);
   }
 }
 

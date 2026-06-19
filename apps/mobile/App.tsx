@@ -155,6 +155,18 @@ function AppContent() {
   const manualPosRef = useRef({ azimuth: 180, altitude: 45 });
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const selectedObjectRef = useRef<{ name: string | null; type: string | null }>({ name: null, type: null });
+  // Star trail long-exposure simulation
+  const [exposureActive, setExposureActive] = useState(false);
+  const [exposureProgress, setExposureProgress] = useState(0); // 0–1
+  const [exposureDone, setExposureDone] = useState(false);
+
+  // Auto-stop exposure at 100%
+  useEffect(() => {
+    if (exposureProgress >= 1 && exposureActive) {
+      setExposureActive(false);
+      setExposureDone(true);
+    }
+  }, [exposureProgress, exposureActive]);
   const [show, setShow] = useState({
     planets: true, moon: true, sun: true, constellations: true,
     deepSky: true, satellites: true, meteors: true, labels: true,
@@ -588,6 +600,8 @@ function AppContent() {
         redMode={show.redMode ?? false}
         cameraMode={cameraMode}
         cameraFovDeg={cameraFovDeg ?? undefined}
+        exposureMode={exposureActive}
+        onExposureProgress={setExposureProgress}
         groundId={groundId}
         selectedObjectRef={selectedObjectRef}
       />
@@ -730,6 +744,21 @@ function AppContent() {
         <TouchableOpacity style={[s.fabBtn, show.redMode && s.fabRed]} onPress={() => toggle('redMode' as any)}>
           <Moon size={20} color={show.redMode ? '#ff4444' : '#fff'} variant={show.redMode ? 'Bold' : 'Linear'} />
         </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.fabBtn, (exposureActive || exposureDone) && s.fabActive]}
+          onPress={() => {
+            if (exposureDone) {
+              // Clear trails and reset
+              setExposureDone(false);
+              setExposureProgress(0);
+            } else {
+              setExposureActive(!exposureActive);
+              if (!exposureActive) { setExposureDone(false); setExposureProgress(0); }
+            }
+          }}
+        >
+          <SkyIcon name="comet2" size={20} color={exposureActive ? '#22c55e' : (exposureDone ? '#fbbf24' : (show.redMode ? '#ff4444' : '#fff'))} />
+        </TouchableOpacity>
         <TouchableOpacity style={s.fabBtn} onPress={() => setShowSettings(true)}>
           <Setting4 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Bulk" />
         </TouchableOpacity>
@@ -769,6 +798,14 @@ function AppContent() {
       </View>
 
       {/* Object info panel */}
+      {(exposureActive || exposureDone) && (
+        <View style={[s.exposureBanner, exposureDone && { borderColor: 'rgba(251,191,36,0.5)' }]} pointerEvents="none">
+          <View style={[s.exposureDot, exposureDone && { backgroundColor: '#fbbf24' }]} />
+          <Text style={[s.exposureText, exposureDone && { color: '#fbbf24' }]}>
+            {exposureDone ? 'Star Trail Complete · Tap ★ to clear' : `Star Trail Exposure · ${Math.round(exposureProgress * 100)}%`}
+          </Text>
+        </View>
+      )}
       {selectedObject && (
         <ObjectInfoPanel object={selectedObject} onClose={() => { setSelectedObject(null); selectedObjectRef.current = { name: null, type: null }; }} />
       )}
@@ -1445,6 +1482,9 @@ const s = StyleSheet.create({
   modePill: { backgroundColor: 'rgba(255,255,255,0.08)', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
   modePillManual: { backgroundColor: 'rgba(255,255,255,0.1)', borderColor: 'rgba(255,255,255,0.15)' },
   modeText: { color: 'rgba(255,255,255,0.8)', fontSize: 10, fontWeight: '700' },
+  exposureBanner: { position: 'absolute', top: 120, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(34,197,94,0.4)' },
+  exposureDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#22c55e' },
+  exposureText: { color: '#22c55e', fontSize: 12, fontWeight: '700', fontFamily: 'Poppins-SemiBold' },
 
   // Bottom bar
   bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0 },

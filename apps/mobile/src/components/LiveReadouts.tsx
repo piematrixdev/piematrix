@@ -66,9 +66,6 @@ export const CompassReadout = React.memo(function CompassReadout({
           <Text style={[s.loadingText, redMode && { color: '#ff4444' }]}>Loading stars…</Text>
         </View>
       )}
-      <View style={[s.modePill, !arMode && s.modePillManual, redMode && { borderColor: '#ff4444' }]}>
-        <Text style={[s.modeText, redMode && { color: '#ff4444' }]}>{arMode ? 'AR' : 'Manual'}</Text>
-      </View>
       <GlassCard intensity={20} borderRadius={20}>
         <View style={s.pill}>
           <Text style={[s.pillDim, redMode && { color: '#991111' }]}>Alt</Text>
