@@ -423,8 +423,8 @@ const s = StyleSheet.create({
   // Features grid
   featuresSection: { marginHorizontal: 20, marginTop: 28 },
   featuresTitle: { color: 'rgba(255,255,255,0.35)', fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 12 },
-  featuresGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 } as any,
-  featureCard: { width: (W - 70) / 4, alignItems: 'center', paddingVertical: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' } as any,
+  featuresGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-start' } as any,
+  featureCard: { width: '22%', minWidth: 70, alignItems: 'center', paddingVertical: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' } as any,
   featureEmoji: { fontSize: 22, marginBottom: 6 },
   featureLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: F_REG, textAlign: 'center' },
 

@@ -551,7 +551,7 @@ const s = StyleSheet.create({
   bubbleRow: { flexDirection: 'row', marginBottom: 14, alignItems: 'flex-start', gap: 8 },
   bubbleRowUser: { justifyContent: 'flex-end' },
   avatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(212,197,160,0.1)', alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-  bubble: { borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12 },
+  bubble: { borderRadius: 20, paddingHorizontal: 16, paddingVertical: 12, maxWidth: W >= 700 ? 420 : undefined },
   userBubble: { backgroundColor: '#d4c5a0', borderBottomRightRadius: 6 },
   botBubble: { backgroundColor: 'rgba(255,255,255,0.04)', borderBottomLeftRadius: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' },
   msgText: { color: 'rgba(255,255,255,0.88)', fontSize: 14.5, fontFamily: 'Poppins-Regular', lineHeight: 21 },

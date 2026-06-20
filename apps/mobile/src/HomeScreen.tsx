@@ -862,10 +862,10 @@ const s = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   // Bento grid
-  bentoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10, marginTop: 4, marginBottom: 10 } as any,
+  bentoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10, marginTop: 4, marginBottom: 10, maxWidth: 600, alignSelf: 'center', width: '100%' } as any,
   bentoCard: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', justifyContent: 'flex-start' } as any,
   bentoLarge: { width: '100%', paddingVertical: 20 } as any,
-  bentoHalf: { width: (W - 50) / 2 } as any,
+  bentoHalf: { width: '47%', flexGrow: 1 } as any,
   bentoIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   bentoTitle: { color: '#fff', fontSize: 15, fontFamily: F_SEMIBOLD, marginBottom: 3 },
   bentoDesc: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: F_LIGHT, lineHeight: 16 },
