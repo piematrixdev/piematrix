@@ -13,11 +13,13 @@ import * as ImagePicker from 'expo-image-picker';
 import {
   ArrowLeft2, User, Logout, Edit2,
   Notification, Shield, Camera, Star1,
+  Eye, Calendar, Discover, ShoppingBag, MessageText1,
 } from 'iconsax-react-native';
 import { useAuth } from './auth/AuthContext';
 import { supabase } from './auth/supabaseClient';
 import SkyIcon from './components/SkyIcon';
 import Constants from 'expo-constants';
+import { useFeatureFlags } from './featureFlags';
 
 const F_LIGHT = 'Poppins-Light';
 const F_REG = 'Poppins-Regular';
@@ -30,6 +32,7 @@ const { width: W } = Dimensions.get('window');
 interface Props { onClose: () => void; onNavigate?: (screen: string) => void; }
 
 export default function ProfileScreen({ onClose, onNavigate }: Props) {
+  const flags = useFeatureFlags();
   const { user, signOut, deleteAccount } = useAuth();
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '');
@@ -200,6 +203,8 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
   return (
     <View style={s.root}>
       <StatusBar barStyle="light-content" />
+      {/* Full-width header gradient (outside scroll so it spans the whole screen on iPad) */}
+      <LinearGradient colors={['rgba(212,197,160,0.12)', 'transparent']} style={s.headerGrad} pointerEvents="none" />
       <ScrollView
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
@@ -207,7 +212,6 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
       >
 
         {/* Header */}
-        <LinearGradient colors={['rgba(212,197,160,0.12)', 'transparent']} style={s.headerGrad} />
         <View style={s.nav}>
           <TouchableOpacity onPress={onClose} style={s.backBtn}>
             <ArrowLeft2 size={20} color="#fff" variant="Linear" />
@@ -331,17 +335,17 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
             <Text style={s.featuresTitle}>FEATURES</Text>
             <View style={s.featuresGrid}>
               {[
-                { screen: 'skywatch', icon: '🔭', label: 'Sky View' },
-                { screen: 'telescope', icon: '⭐', label: 'Telescope' },
-                { screen: 'aichat', icon: '✨', label: 'Ask Orion' },
-                { screen: 'calendar', icon: '📅', label: 'Calendar' },
-                { screen: 'events', icon: '🌠', label: 'Events' },
-                { screen: 'polarscope', icon: '🧭', label: 'Polar Scope' },
-                { screen: 'shop', icon: '🛒', label: 'Shop' },
-                { screen: 'feedback', icon: '💬', label: 'Feedback' },
+                { screen: 'skywatch', icon: <Eye size={22} color="#60a5fa" variant="Bulk" />, label: 'Sky View' },
+                { screen: 'telescope', icon: <Star1 size={22} color="#c9b896" variant="Bulk" />, label: 'Telescope' },
+                ...(flags.ai_chat_enabled ? [{ screen: 'aichat', icon: <Star1 size={22} color="#d4c5a0" variant="Bold" />, label: 'Ask Orion' }] : []),
+                { screen: 'calendar', icon: <Calendar size={22} color="#4ade80" variant="Bulk" />, label: 'Calendar' },
+                { screen: 'events', icon: <Notification size={22} color="#fbbf24" variant="Bulk" />, label: 'Events' },
+                { screen: 'polarscope', icon: <Discover size={22} color="#22d3ee" variant="Bulk" />, label: 'Polar Scope' },
+                { screen: 'shop', icon: <ShoppingBag size={22} color="#f59e0b" variant="Bulk" />, label: 'Shop' },
+                { screen: 'feedback', icon: <MessageText1 size={22} color="#60a5fa" variant="Bulk" />, label: 'Feedback' },
               ].map((item) => (
                 <TouchableOpacity key={item.screen} style={s.featureCard} activeOpacity={0.8} onPress={() => onNavigate(item.screen)}>
-                  <Text style={s.featureEmoji}>{item.icon}</Text>
+                  <View style={s.featureIconWrap}>{item.icon}</View>
                   <Text style={s.featureLabel}>{item.label}</Text>
                 </TouchableOpacity>
               ))}
@@ -368,7 +372,7 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: BG },
-  scroll: {},
+  scroll: W >= 700 ? { maxWidth: 600, alignSelf: 'center', width: '100%' } : {},
   headerGrad: { position: 'absolute', top: 0, left: 0, right: 0, height: 200 },
   nav: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingTop: 58, paddingHorizontal: 20, paddingBottom: 8 },
   backBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.06)', justifyContent: 'center', alignItems: 'center' },
@@ -425,7 +429,7 @@ const s = StyleSheet.create({
   featuresTitle: { color: 'rgba(255,255,255,0.35)', fontSize: 11, fontWeight: '700', letterSpacing: 1, marginBottom: 12 },
   featuresGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-start' } as any,
   featureCard: { width: '22%', minWidth: 70, alignItems: 'center', paddingVertical: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' } as any,
-  featureEmoji: { fontSize: 22, marginBottom: 6 },
+  featureIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   featureLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: F_REG, textAlign: 'center' },
 
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginHorizontal: 20, marginTop: 32, paddingVertical: 16, borderRadius: 16, backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)' },

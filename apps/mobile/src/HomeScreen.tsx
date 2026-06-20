@@ -27,6 +27,7 @@ import { fetchFeaturedProducts, fetchCollectionProducts, Product } from './shopi
 import LazyImage from './components/LazyImage';
 import { useAuth } from './auth/AuthContext';
 import { useContent } from './content/ContentContext';
+import { useFeatureFlags } from './featureFlags';
 
 const { width: W, height: H } = Dimensions.get('window');
 const F_LIGHT = 'Poppins-Light';
@@ -91,6 +92,7 @@ const homeCache = {
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 export default function HomeScreen({ onNavigate, onProductSelect, onCategorySelect, onSearchObject, observer }: HomeScreenProps) {
+  const flags = useFeatureFlags();
   const [products, setProducts] = useState<Product[]>([]);
   const [categoryImages, setCategoryImages] = useState<Record<string, string>>({});
   const [tonightData, setTonightData] = useState<TonightsSkyData | null>(null);
@@ -368,6 +370,17 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
           </View>
         </TouchableOpacity>
 
+        {/* Ask Orion — prominent AI entry point (gated by feature flag) */}
+        {flags.ai_chat_enabled && (
+          <TouchableOpacity style={s.askBar} activeOpacity={0.85} onPress={() => onNavigate('aichat')}>
+            <View style={s.askIcon}>
+              <Star1 size={16} color="#d4c5a0" variant="Bold" />
+            </View>
+            <Text style={s.askText}>Ask Orion anything about the sky…</Text>
+            <ArrowRight2 size={16} color="rgba(255,255,255,0.4)" variant="Linear" />
+          </TouchableOpacity>
+        )}
+
         {/* Profile completion banner */}
         {profileIncomplete && (
           <TouchableOpacity style={s.profileBanner} activeOpacity={0.85} onPress={() => onNavigate('profile')}>
@@ -544,7 +557,7 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
                 onPress={() => onCategorySelect?.(cat.handle, cat.title)}
               >
                 {categoryImages[cat.handle] ? (
-                  <LazyImage uri={categoryImages[cat.handle]} width={W * 0.4} height={W * 0.4} borderRadius={16} />
+                  <LazyImage uri={categoryImages[cat.handle]} width={W >= 700 ? 240 : W * 0.4} height={W >= 700 ? 240 : W * 0.4} borderRadius={16} />
                 ) : (
                   <View style={s.catImgPlaceholder}>
                     <ShoppingBag size={24} color="rgba(255,255,255,0.1)" variant="Bulk" />
@@ -584,12 +597,12 @@ export default function HomeScreen({ onNavigate, onProductSelect, onCategorySele
             </TouchableOpacity>
 
             {/* Row 2: two half-width cards */}
-            <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('aichat')}>
-              <View style={[s.bentoIcon, { backgroundColor: 'rgba(212,197,160,0.15)' }]}>
-                <Star1 size={20} color="#d4c5a0" variant="Bold" />
+            <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('skywatch')}>
+              <View style={[s.bentoIcon, { backgroundColor: 'rgba(96,165,250,0.15)' }]}>
+                <Eye size={20} color="#60a5fa" variant="Bulk" />
               </View>
-              <Text style={s.bentoTitle}>Ask Orion</Text>
-              <Text style={s.bentoDesc}>AI sky assistant</Text>
+              <Text style={s.bentoTitle}>Sky View</Text>
+              <Text style={s.bentoDesc}>Live planetarium</Text>
             </TouchableOpacity>
 
             <TouchableOpacity style={[s.bentoCard, s.bentoHalf]} activeOpacity={0.9} onPress={() => onNavigate('events')}>
@@ -734,8 +747,8 @@ const s = StyleSheet.create({
 
   // Hero — edge to edge, top of screen
   hero: {
-    width: W, height: H * 0.48, marginBottom: 20,
-  },
+    width: '100%', height: W >= 700 ? Math.min(H * 0.42, 480) : H * 0.48, marginBottom: 20,
+  } as any,
   heroImage: { ...StyleSheet.absoluteFillObject, width: '100%', height: '100%' },
   heroContent: {
     flex: 1, justifyContent: 'flex-end', padding: 22, paddingBottom: 28,
@@ -761,6 +774,16 @@ const s = StyleSheet.create({
     alignSelf: 'flex-start', paddingHorizontal: 20,
   },
   heroCtaText: { color: '#030308', fontSize: 13, fontFamily: F_SEMIBOLD },
+
+  // Ask Orion AI prompt bar
+  askBar: {
+    flexDirection: 'row', alignItems: 'center', gap: 12,
+    marginHorizontal: 20, marginBottom: 20, paddingVertical: 14, paddingHorizontal: 16,
+    backgroundColor: 'rgba(255,255,255,0.04)', borderRadius: 24,
+    borderWidth: 1, borderColor: 'rgba(212,197,160,0.18)',
+  } as any,
+  askIcon: { width: 28, height: 28, borderRadius: 14, backgroundColor: 'rgba(212,197,160,0.12)', alignItems: 'center', justifyContent: 'center' },
+  askText: { flex: 1, color: 'rgba(255,255,255,0.6)', fontSize: 13, fontFamily: F_REG },
 
   // Profile completion banner
   profileBanner: {
@@ -809,7 +832,7 @@ const s = StyleSheet.create({
 
   // Banners
   bannerWrap: { marginBottom: 28, paddingHorizontal: 16 },
-  bannerCard: { width: W - 32, height: 170, borderRadius: 20, overflow: 'hidden' },
+  bannerCard: { width: W - 32, height: W >= 700 ? 220 : 170, borderRadius: 20, overflow: 'hidden' },
   bannerGrad: { position: 'absolute', bottom: 0, left: 0, right: 0, height: 90, borderBottomLeftRadius: 20, borderBottomRightRadius: 20 },
   bannerContent: { position: 'absolute', bottom: 18, left: 18, right: 18 },
   bannerTitle: { color: '#fff', fontSize: 19, fontFamily: F_BOLD, textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 4 },
@@ -820,7 +843,7 @@ const s = StyleSheet.create({
 
   // Products (removed — replaced by categories)
   prodScroll: { paddingHorizontal: 24, gap: 12 },
-  prodCard: { width: W * 0.38 },
+  prodCard: { width: W >= 700 ? 220 : W * 0.38 },
   prodImgEmpty: { backgroundColor: '#0a0a12', borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
   prodName: { color: 'rgba(255,255,255,0.75)', fontSize: 12, fontFamily: F_REG, marginTop: 10 },
   prodPrice: { color: '#d4c5a0', fontSize: 14, fontFamily: F_BOLD, marginTop: 3 },
@@ -828,11 +851,11 @@ const s = StyleSheet.create({
   // Categories — large image cards
   catScroll: { paddingHorizontal: 24, gap: 14 },
   catCard: {
-    width: W * 0.4, borderRadius: 16, overflow: 'hidden',
+    width: W >= 700 ? 240 : W * 0.4, borderRadius: 16, overflow: 'hidden',
     backgroundColor: '#0a0a12',
   },
   catImgPlaceholder: {
-    width: W * 0.4, height: W * 0.4, borderRadius: 16,
+    width: W >= 700 ? 240 : W * 0.4, height: W >= 700 ? 240 : W * 0.4, borderRadius: 16,
     backgroundColor: 'rgba(255,255,255,0.03)',
     justifyContent: 'center', alignItems: 'center',
   },
@@ -861,11 +884,11 @@ const s = StyleSheet.create({
     width: 40, height: 40, borderRadius: 12,
     justifyContent: 'center', alignItems: 'center',
   },
-  // Bento grid
-  bentoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10, marginTop: 4, marginBottom: 10, maxWidth: 600, alignSelf: 'center', width: '100%' } as any,
+  // Bento grid (responsive: 2-col phone, 4-col iPad)
+  bentoGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 20, gap: 10, marginTop: 4, marginBottom: 10 } as any,
   bentoCard: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 18, padding: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)', justifyContent: 'flex-start' } as any,
   bentoLarge: { width: '100%', paddingVertical: 20 } as any,
-  bentoHalf: { width: '47%', flexGrow: 1 } as any,
+  bentoHalf: { width: W >= 700 ? '23.5%' : '47%', flexGrow: 1 } as any,
   bentoIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginBottom: 10 },
   bentoTitle: { color: '#fff', fontSize: 15, fontFamily: F_SEMIBOLD, marginBottom: 3 },
   bentoDesc: { color: 'rgba(255,255,255,0.4)', fontSize: 12, fontFamily: F_LIGHT, lineHeight: 16 },

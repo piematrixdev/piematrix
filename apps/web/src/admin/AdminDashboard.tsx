@@ -19,6 +19,7 @@ import EmailPanel from './panels/EmailPanel';
 import PushPanel from './panels/PushPanel';
 import SkyCalendarPanel from './panels/SkyCalendarPanel';
 import SupportConfigPanel from './panels/SupportConfigPanel';
+import FeatureFlagsPanel from './panels/FeatureFlagsPanel';
 import ComingSoonPanel from './panels/ComingSoonPanel';
 
 type SectionId =
@@ -32,7 +33,8 @@ type SectionId =
   | 'emails'
   | 'push'
   | 'celestial'
-  | 'alerts';
+  | 'alerts'
+  | 'flags';
 
 interface NavItem {
   id: SectionId;
@@ -54,6 +56,7 @@ const NAV: NavItem[] = [
   { id: 'push', label: 'Push Notifications', icon: '⊕', group: 'Engagement' },
   { id: 'celestial', label: 'Sky Calendar', icon: '✶', group: 'Content' },
   { id: 'alerts', label: 'Support Config', icon: '✸', group: 'Engagement' },
+  { id: 'flags', label: 'Feature Flags', icon: '⚑', group: 'System' },
 ];
 
 interface Props {
@@ -93,6 +96,8 @@ export default function AdminDashboard({ email, role }: Props) {
         return <SkyCalendarPanel />;
       case 'alerts':
         return <SupportConfigPanel />;
+      case 'flags':
+        return <FeatureFlagsPanel />;
       default:
         return null;
     }

@@ -50,6 +50,7 @@ import * as Notifications from 'expo-notifications';
 import { getTrackingPermissionsAsync, requestTrackingPermissionsAsync } from 'expo-tracking-transparency';
 import OnboardingScreen from './src/OnboardingScreen';
 import { getConstellation, formatRA, formatDec, formatAzAlt, getSpectralDescription, estimateDistance, SPECTRAL_COLORS } from './src/starInfo';
+import { useFeatureFlags, refreshFeatureFlags } from './src/featureFlags';
 
 const { width: W, height: H } = Dimensions.get('window');
 
@@ -76,9 +77,14 @@ type Screen = 'home' | 'skywatch' | 'shop' | 'support' | 'product' | 'calendar' 
 function AppContent() {
   // --- Navigation ---
   const [currentScreen, setCurrentScreen] = useState<Screen>('home');
+  const flags = useFeatureFlags();
   const [selectedProductHandle, setSelectedProductHandle] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<{ handle: string; title: string } | null>(null);
   const screenHistory = useRef<string[]>(['home']);
+
+  // Kick off a feature-flag fetch as early as possible so gated UI shows
+  // up correctly on first paint after the network round-trip lands.
+  useEffect(() => { refreshFeatureFlags().catch(() => {}); }, []);
 
   // --- Push Notifications ---
   const { user } = useAuth();
@@ -549,13 +555,20 @@ function AppContent() {
   if (currentScreen === 'category' && selectedCategory) return <CategoryScreen collectionHandle={selectedCategory.handle} title={selectedCategory.title} onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} />;
   if (currentScreen === 'shop') return (<View style={{ flex: 1 }}><ShopScreen onClose={() => navigateTo('home')} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} /><BottomTabBar active="shop" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
   if (currentScreen === 'polarscope') return <PolarScopeScreen onClose={goBack} observerLongitude={skyRefs.coords.current.longitude} />;
-  if (currentScreen === 'aichat') return <AIChatScreen
-    onClose={goBack}
-    onNavigate={(screen) => navigateTo(screen as any)}
-    onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }}
-    onSearchObject={(target) => { setSearchTarget(target); recalibrate(); navigateTo('skywatch'); }}
-    products={chatProducts}
-  />;
+  if (currentScreen === 'aichat') {
+    if (!flags.ai_chat_enabled) {
+      // Feature gated off — bounce back home rather than render the chat.
+      navigateTo('home');
+      return null;
+    }
+    return <AIChatScreen
+      onClose={goBack}
+      onNavigate={(screen) => navigateTo(screen as any)}
+      onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }}
+      onSearchObject={(target) => { setSearchTarget(target); recalibrate(); navigateTo('skywatch'); }}
+      products={chatProducts}
+    />;
+  }
   if (currentScreen === 'support') return <SupportScreen onClose={goBack} />;
   if (currentScreen === 'feedback') return <FeedbackScreen onClose={goBack} />;
   if (currentScreen === 'events') return <EventsScreen onClose={goBack} />;
@@ -774,12 +787,9 @@ function AppContent() {
         <TouchableOpacity style={s.fabBtn} onPress={() => setShowSettings(true)}>
           <Setting4 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Bulk" />
         </TouchableOpacity>
-        {pointing.arAvailable !== false && (
         <TouchableOpacity style={[s.fabBtn, cameraMode && s.fabActive]} onPress={toggleCamera}>
           <Camera size={20} color={show.redMode ? '#ff4444' : (cameraMode ? '#22c55e' : '#fff')} variant="Bulk" />
         </TouchableOpacity>
-        )}
-        {pointing.arAvailable !== false && (
         <TouchableOpacity
           style={[s.fabBtn, !arMode && s.fabActive]}
           onPress={() => {
@@ -806,7 +816,6 @@ function AppContent() {
         >
           {arMode ? <SkyIcon name="ar-view" size={22} color={show.redMode ? '#ff4444' : '#22c55e'} /> : <SkyIcon name="ar-device" size={22} color={show.redMode ? '#ff4444' : '#d4c5a0'} />}
         </TouchableOpacity>
-        )}
       </View>
 
       {/* Object info panel */}
