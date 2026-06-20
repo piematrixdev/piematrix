@@ -4,7 +4,7 @@
  * ground, horizon — all GPU-rendered at 60fps.
  */
 
-import React, { useRef, useCallback, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { View, Dimensions, PixelRatio } from 'react-native';
 import { GLView, ExpoWebGLRenderingContext } from 'expo-gl';
 import { Renderer, loadTextureAsync } from 'expo-three';
@@ -705,10 +705,25 @@ interface Props {
   exposureMode?: boolean;
   /** Progress callback 0–1 for the exposure duration. */
   onExposureProgress?: (p: number) => void;
+  /**
+   * Bumping this number signals the renderer to clear the accumulated star
+   * trail. Lets the parent keep trails on screen after exposureMode flips off
+   * (so the user can admire / save them) and clear them on demand.
+   */
+  clearTrailToken?: number;
   /** Selected ground texture id (see grounds.ts) */
   groundId?: string;
   /** Currently selected object ref (for showing orbital path — bypasses React render) */
   selectedObjectRef?: React.MutableRefObject<{ name: string | null; type: string | null }>;
+}
+
+/**
+ * Imperative handle exposed via ref — lets the parent capture the current GL
+ * frame to a PNG file (e.g. to save a star-trail composition to Photos).
+ */
+export interface SkyRendererHandle {
+  /** Snapshot the rendered sky to a file URI. Returns null if GL is not ready. */
+  captureSnapshot: () => Promise<string | null>;
 }
 
 /**
@@ -832,7 +847,7 @@ function planetRenderedWorldRadius(angRadiusArcsec: number, fov: number, minScre
 
 
 
-function SkyRendererImpl(props: Props) {
+function SkyRendererImpl(props: Props, forwardedRef: React.ForwardedRef<SkyRendererHandle>) {
   const propsRef = useRef(props);
   propsRef.current = props;
 
@@ -874,7 +889,33 @@ function SkyRendererImpl(props: Props) {
   const namedStarsSrc = useRef<Star[] | null>(null);
   const eqWorldTmp = useRef(new THREE.Vector3());
 
+  // Held GL context — used by the imperative captureSnapshot() handle so the
+  // parent can save the current frame to Photos.
+  const glRef = useRef<ExpoWebGLRenderingContext | null>(null);
+  const glViewRef = useRef<GLView | null>(null);
+
+  useImperativeHandle(forwardedRef, () => ({
+    captureSnapshot: async () => {
+      const view = glViewRef.current as any;
+      const gl = glRef.current;
+      if (!gl) return null;
+      try {
+        // Prefer the instance method (handles framebuffer flush); fall back
+        // to the static method if for some reason the ref isn't a GLView.
+        if (view && typeof view.takeSnapshotAsync === 'function') {
+          const r = await view.takeSnapshotAsync({ format: 'png' });
+          return (r && (r.uri as string)) || null;
+        }
+        const r = await GLView.takeSnapshotAsync(gl, { format: 'png' });
+        return (r && (r.uri as string)) || null;
+      } catch {
+        return null;
+      }
+    },
+  }), []);
+
   const onGL = useCallback((gl: ExpoWebGLRenderingContext) => {
+    glRef.current = gl;
     const renderer = new Renderer({ gl }) as any;
     renderer.setSize(gl.drawingBufferWidth, gl.drawingBufferHeight);
     renderer.setClearColor(0x000000);
@@ -2325,6 +2366,11 @@ function SkyRendererImpl(props: Props) {
     let trailStartTime = 0;
     let trailLastSample = 0;
     let trailWasActive = false;
+    // Last clearTrailToken value seen — bumping this from the parent is the
+    // ONLY thing that wipes the accumulated trail. Stopping exposure (auto at
+    // 100% or manual) leaves the trail rendered on screen so the user can
+    // capture / save / admire it.
+    let lastClearToken = propsRef.current.clearTrailToken ?? 0;
     // Previous star world positions (for drawing segments from prev → current)
     let prevStarWorldPos: Float32Array | null = null;
 
@@ -2620,14 +2666,27 @@ function SkyRendererImpl(props: Props) {
         prevStarWorldPos = null;
         trailLine.visible = true;
       }
-      if (!exposureOn && trailWasActive) {
-        // Just stopped: clear trails and hide
-        trailVertCount = 0;
-        trailGeo.setDrawRange(0, 0);
-        trailLine.visible = false;
-        prevStarWorldPos = null;
-      }
+      // When exposure flips off we deliberately DO NOT clear — the trail stays
+      // rendered until the parent bumps clearTrailToken (or starts a new run,
+      // which resets above).
       trailWasActive = exposureOn;
+
+      // Explicit clear request from the parent. Ignored while a fresh
+      // exposure is in progress — the "just started" block above has already
+      // reset everything in that case, and clearing on top would zero out
+      // trailStartTime and immediately push progress to 1.
+      const ct = propsRef.current.clearTrailToken ?? 0;
+      if (ct !== lastClearToken) {
+        lastClearToken = ct;
+        if (!exposureOn) {
+          trailVertCount = 0;
+          trailGeo.setDrawRange(0, 0);
+          trailLine.visible = false;
+          trailStartTime = 0;
+          trailLastSample = 0;
+          prevStarWorldPos = null;
+        }
+      }
 
       if (exposureOn && starPtsRef.current && skyGroupRef.current) {
         // Force world matrix update so positions match the current (accelerated) rotation.
@@ -3703,7 +3762,7 @@ function SkyRendererImpl(props: Props) {
 
   return (
     <View style={{ flex: 1, backgroundColor: 'transparent' }}>
-      <GLView style={{ width: W, height: H, backgroundColor: 'transparent' }} onContextCreate={onGL} />
+      <GLView ref={glViewRef as any} style={{ width: W, height: H, backgroundColor: 'transparent' }} onContextCreate={onGL} />
     </View>
   );
 }
@@ -3751,5 +3810,9 @@ function propsEqual(a: Props, b: Props): boolean {
   return true;
 }
 
-const SkyRenderer = React.memo(SkyRendererImpl, propsEqual);
+const SkyRenderer = React.memo(
+  React.forwardRef<SkyRendererHandle, Props>(SkyRendererImpl),
+  // memo with forwardRef expects a comparator on (prevProps, nextProps)
+  (a, b) => propsEqual(a, b),
+);
 export default SkyRenderer;

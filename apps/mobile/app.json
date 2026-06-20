@@ -10,7 +10,7 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#030308"
+      "backgroundColor": "#ffffff"
     },
     "ios": {
       "supportsTablet": true,
@@ -84,6 +84,14 @@
         "expo-camera",
         {
           "cameraPermission": "Pie Matrix uses the camera to overlay the night sky onto your live surroundings (AR view), and to let you take a profile photo."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Pie Matrix needs photo library access only to save your captured star-trail images.",
+          "savePhotosPermission": "Pie Matrix needs to save your captured star-trail images to your Photos library.",
+          "isAccessMediaLocationEnabled": false
         }
       ]
     ],

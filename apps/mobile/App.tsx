@@ -1,7 +1,7 @@
 import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
-  ActivityIndicator, Modal, TextInput, FlatList, Animated, Platform, Alert,
+  ActivityIndicator, Modal, TextInput, FlatList, Animated, Platform, Alert, Linking,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -15,12 +15,13 @@ import {
   Setting4, Clock, Building,
   ArrowLeft2,
   Star1, Radar, SearchNormal1, Moon, Heart, Maximize4, LocationDiscover, Eye,
-  Home2, ShoppingBag, Calendar, ProfileCircle, Discover, Camera,
+  Home2, ShoppingBag, Calendar, ProfileCircle, Discover, Camera, Gallery,
 } from 'iconsax-react-native';
 import type { HorizontalCoordinates } from '@virtual-window/astronomy-engine';
 import { useSkyPointing } from './src/useSkyPointing';
 import { getCameraMinDimFovDeg } from './modules/camera-fov';
 import SkyRenderer from './src/SkyRenderer';
+import type { SkyRendererHandle } from './src/SkyRenderer';
 import SkyIcon from './src/components/SkyIcon';
 import { effectiveLimitingMagnitude } from './src/stars';
 import { resolveStarName } from './src/starNames';
@@ -163,6 +164,7 @@ function AppContent() {
   const manualPosRef = useRef({ azimuth: 180, altitude: 45 });
   const [selectedObject, setSelectedObject] = useState<SelectedObject | null>(null);
   const selectedObjectRef = useRef<{ name: string | null; type: string | null }>({ name: null, type: null });
+  const skyRendererRef = useRef<SkyRendererHandle | null>(null);
   // Products for AI chat recommendations (cached once)
   const [chatProducts, setChatProducts] = useState<Product[]>([]);
   useEffect(() => { fetchFeaturedProducts(20).then(setChatProducts).catch(() => {}); }, []);
@@ -170,8 +172,16 @@ function AppContent() {
   const [exposureActive, setExposureActive] = useState(false);
   const [exposureProgress, setExposureProgress] = useState(0); // 0–1
   const [exposureDone, setExposureDone] = useState(false);
+  // Bumping this number tells SkyRenderer to wipe the accumulated trail.
+  // Trails persist on screen (across exposureActive=false) until cleared.
+  const [trailClearToken, setTrailClearToken] = useState(0);
+  // Saving the captured frame to the device photo library.
+  const [savingPhoto, setSavingPhoto] = useState(false);
+  // One-tap dismissal of the "motion sensors off" banner.
+  const [motionPromptDismissed, setMotionPromptDismissed] = useState(false);
 
-  // Auto-stop exposure at 100%
+  // Auto-stop exposure at 100% — leaves the trail rendered on screen so the
+  // user can save / admire it. Tapping the comet again now clears it.
   useEffect(() => {
     if (exposureProgress >= 1 && exposureActive) {
       setExposureActive(false);
@@ -593,6 +603,7 @@ function AppContent() {
       )}
       {/* Three.js sky renderer */}
       <SkyRenderer
+        ref={skyRendererRef}
         azimuth={viewCenter.azimuth}
         altitude={viewCenter.altitude}
         fov={fov}
@@ -627,6 +638,7 @@ function AppContent() {
         cameraFovDeg={cameraFovDeg ?? undefined}
         exposureMode={exposureActive}
         onExposureProgress={setExposureProgress}
+        clearTrailToken={trailClearToken}
         groundId={groundId}
         selectedObjectRef={selectedObjectRef}
       />
@@ -761,6 +773,29 @@ function AppContent() {
         />
       )}
 
+      {/* Motion sensors prompt — shown when DeviceMotion is unavailable
+          (denied/disabled). The sky still renders in manual pan mode, but
+          AR alignment depends on motion access — point users to Settings. */}
+      {pointing.ready && pointing.arAvailable === false && !motionPromptDismissed && (
+        <View style={s.motionPrompt}>
+          <View style={s.motionPromptInner}>
+            <SkyIcon name="satellite" size={18} color="#fbbf24" />
+            <View style={{ flex: 1 }}>
+              <Text style={s.motionPromptTitle}>Motion access off</Text>
+              <Text style={s.motionPromptBody}>
+                Enable Motion &amp; Fitness so the sky aligns with where your phone is pointed.
+              </Text>
+            </View>
+            <TouchableOpacity style={s.motionPromptBtn} onPress={() => Linking.openSettings()}>
+              <Text style={s.motionPromptBtnText}>Open Settings</Text>
+            </TouchableOpacity>
+            <TouchableOpacity onPress={() => setMotionPromptDismissed(true)} style={s.motionPromptDismiss}>
+              <Text style={s.motionPromptDismissText}>×</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {/* FAB — right side */}
       <View style={s.fab}>
         <TouchableOpacity style={s.fabBtn} onPress={() => setShowSearch(true)}>
@@ -773,17 +808,58 @@ function AppContent() {
           style={[s.fabBtn, (exposureActive || exposureDone) && s.fabActive]}
           onPress={() => {
             if (exposureDone) {
-              // Clear trails and reset
+              // Trail is being shown after a completed/stopped exposure —
+              // tapping again wipes it.
+              setTrailClearToken(t => t + 1);
               setExposureDone(false);
               setExposureProgress(0);
+            } else if (exposureActive) {
+              // Manually stopping mid-exposure: keep the partial trail so the
+              // user can still capture / save it. Next tap clears.
+              setExposureActive(false);
+              setExposureDone(true);
             } else {
-              setExposureActive(!exposureActive);
-              if (!exposureActive) { setExposureDone(false); setExposureProgress(0); }
+              // Idle → start a fresh exposure. SkyRenderer's "just started"
+              // branch wipes any prior trail buffers itself, so we don't need
+              // to bump clearTrailToken here (doing so would race with the
+              // start-block and zero out trailStartTime).
+              setExposureProgress(0);
+              setExposureDone(false);
+              setExposureActive(true);
             }
           }}
         >
           <SkyIcon name="comet2" size={20} color={exposureActive ? '#22c55e' : (exposureDone ? '#fbbf24' : (show.redMode ? '#ff4444' : '#fff'))} />
         </TouchableOpacity>
+        {/* Save trailed sky to Photos — only useful while a trail is rendered */}
+        {(exposureActive || exposureDone) && (
+          <TouchableOpacity
+            style={[s.fabBtn, savingPhoto && s.fabActive]}
+            disabled={savingPhoto}
+            onPress={async () => {
+              if (savingPhoto) return;
+              setSavingPhoto(true);
+              try {
+                const uri = await skyRendererRef.current?.captureSnapshot();
+                if (!uri) {
+                  Alert.alert('Capture failed', 'Could not snapshot the current sky. Please try again.');
+                  return;
+                }
+                const { saveImageToPhotos } = require('./src/savePhoto');
+                const r = await saveImageToPhotos(uri);
+                if (r.ok) {
+                  Alert.alert('Saved', 'Star trail saved to your Photos library.');
+                } else if (r.reason === 'failed') {
+                  Alert.alert('Save failed', 'The image was captured but could not be written to your library.');
+                }
+              } finally {
+                setSavingPhoto(false);
+              }
+            }}
+          >
+            <Gallery size={20} color={savingPhoto ? '#22c55e' : (show.redMode ? '#ff4444' : '#fff')} variant={savingPhoto ? 'Bold' : 'Linear'} />
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={s.fabBtn} onPress={() => setShowSettings(true)}>
           <Setting4 size={20} color={show.redMode ? '#ff4444' : '#fff'} variant="Bulk" />
         </TouchableOpacity>
@@ -822,9 +898,17 @@ function AppContent() {
       {(exposureActive || exposureDone) && (
         <View style={[s.exposureBanner, exposureDone && { borderColor: 'rgba(251,191,36,0.5)' }]} pointerEvents="none">
           <View style={[s.exposureDot, exposureDone && { backgroundColor: '#fbbf24' }]} />
-          <Text style={[s.exposureText, exposureDone && { color: '#fbbf24' }]}>
-            {exposureDone ? 'Star Trail Complete · Tap ★ to clear' : `Star Trail Exposure · ${Math.round(exposureProgress * 100)}%`}
-          </Text>
+          {exposureDone ? (
+            <View style={s.exposureRow}>
+              <Text style={[s.exposureText, { color: '#fbbf24' }]}>Star Trail Ready · Tap </Text>
+              <Gallery size={14} color="#fbbf24" variant="Linear" />
+              <Text style={[s.exposureText, { color: '#fbbf24' }]}> to save · Tap </Text>
+              <SkyIcon name="comet2" size={14} color="#fbbf24" />
+              <Text style={[s.exposureText, { color: '#fbbf24' }]}> to clear</Text>
+            </View>
+          ) : (
+            <Text style={s.exposureText}>{`Star Trail Exposure · ${Math.round(exposureProgress * 100)}%`}</Text>
+          )}
         </View>
       )}
       {selectedObject && (
@@ -1506,6 +1590,27 @@ const s = StyleSheet.create({
   exposureBanner: { position: 'absolute', top: 120, alignSelf: 'center', flexDirection: 'row', alignItems: 'center', gap: 8, backgroundColor: 'rgba(0,0,0,0.7)', paddingHorizontal: 14, paddingVertical: 8, borderRadius: 20, borderWidth: 1, borderColor: 'rgba(34,197,94,0.4)' },
   exposureDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#22c55e' },
   exposureText: { color: '#22c55e', fontSize: 12, fontWeight: '700', fontFamily: 'Poppins-SemiBold' },
+  exposureRow: { flexDirection: 'row', alignItems: 'center' },
+
+  // "Motion access off" banner — shown on the sky view when DeviceMotion is
+  // unavailable / denied. Compact, top-of-screen, dismissable.
+  motionPrompt: { position: 'absolute', top: 60, left: 12, right: 12 },
+  motionPromptInner: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: 'rgba(8,10,18,0.92)',
+    borderColor: 'rgba(251,191,36,0.45)', borderWidth: 1, borderRadius: 14,
+    paddingVertical: 10, paddingHorizontal: 12,
+  },
+  motionPromptTitle: { color: '#fbbf24', fontSize: 12, fontWeight: '800', fontFamily: 'Poppins-Bold' },
+  motionPromptBody: { color: 'rgba(255,255,255,0.75)', fontSize: 11, lineHeight: 14, marginTop: 2 },
+  motionPromptBtn: {
+    backgroundColor: 'rgba(251,191,36,0.18)',
+    borderColor: 'rgba(251,191,36,0.5)', borderWidth: 1,
+    paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
+  },
+  motionPromptBtnText: { color: '#fbbf24', fontSize: 11, fontWeight: '700' },
+  motionPromptDismiss: { padding: 4, marginLeft: 2 },
+  motionPromptDismissText: { color: 'rgba(255,255,255,0.5)', fontSize: 18, lineHeight: 18, fontWeight: '600' },
 
   // Bottom bar
   bottomBar: { position: 'absolute', bottom: 0, left: 0, right: 0 },
