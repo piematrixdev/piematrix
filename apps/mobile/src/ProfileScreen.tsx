@@ -5,7 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, ScrollView,
-  StatusBar, Alert, TextInput, RefreshControl, Dimensions,
+  StatusBar, Alert, TextInput, RefreshControl, Dimensions, Modal,
 } from 'react-native';
 import { Image } from 'expo-image';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -34,6 +34,7 @@ interface Props { onClose: () => void; onNavigate?: (screen: string) => void; }
 export default function ProfileScreen({ onClose, onNavigate }: Props) {
   const flags = useFeatureFlags();
   const { user, signOut, deleteAccount } = useAuth();
+  const [showLogin, setShowLogin] = useState(false);
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? '');
   const [phone, setPhone] = useState(user?.user_metadata?.phone ?? '');
@@ -52,6 +53,9 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
   const memberDays = user?.created_at
     ? Math.floor((Date.now() - new Date(user.created_at).getTime()) / (1000 * 60 * 60 * 24))
     : 0;
+
+  // Auto-dismiss the login modal once the user is signed in.
+  useEffect(() => { if (user && showLogin) setShowLogin(false); }, [user, showLogin]);
 
   const fetchProfile = async () => {
     if (!user?.id) return;
@@ -78,10 +82,11 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
 
   useEffect(() => { fetchProfile(); }, [user?.id]);
 
-  // Auto-open edit mode if phone is missing
-  useEffect(() => {
-    if (profile && !phone) setEditing(true);
-  }, [profile]);
+  // Note: an earlier version auto-opened edit mode whenever the profile
+  // loaded with an empty phone. That made the keyboard pop every time the
+  // user visited the tab — annoying and the keyboard popping was being
+  // reported as a bug. Edits are now opt-in via the pencil button next to
+  // the name; saving without a phone is fine.
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -205,6 +210,64 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
       <StatusBar barStyle="light-content" />
       {/* Full-width header gradient (outside scroll so it spans the whole screen on iPad) */}
       <LinearGradient colors={['rgba(212,197,160,0.12)', 'transparent']} style={s.headerGrad} pointerEvents="none" />
+
+      {/* Guest mode — no signed-in user. Apple App Review 5.1.1(v): the app
+          itself stays usable as a guest, so the Profile tab pitches sign-in
+          rather than gating the rest of the app. Account-bound features
+          (favorites sync, profile, RSVP, AI chat history) live behind this. */}
+      {!user ? (
+        <ScrollView contentContainerStyle={s.scroll} showsVerticalScrollIndicator={false}>
+          <View style={s.nav}>
+            <TouchableOpacity onPress={onClose} style={s.backBtn}>
+              <ArrowLeft2 size={20} color="#fff" variant="Linear" />
+            </TouchableOpacity>
+            <Text style={s.navTitle}>Profile</Text>
+            <View style={{ width: 40 }} />
+          </View>
+
+          <View style={s.guestCard}>
+            <View style={s.guestIconWrap}>
+              <User size={32} color="#d4c5a0" variant="Bold" />
+            </View>
+            <Text style={s.guestTitle}>Sign in to unlock more</Text>
+            <Text style={s.guestSub}>
+              Create a free account to save favorites across devices, RSVP to events, and
+              keep your stargazing history.
+            </Text>
+            <TouchableOpacity
+              style={s.guestPrimaryBtn}
+              activeOpacity={0.85}
+              onPress={() => setShowLogin(true)}
+            >
+              <Text style={s.guestPrimaryBtnText}>Sign in or create account</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Features grid is still useful for guests as a navigation hub. */}
+          {onNavigate && (
+            <View style={s.featuresSection}>
+              <Text style={s.featuresTitle}>FEATURES</Text>
+              <View style={s.featuresGrid}>
+                {[
+                  { screen: 'skywatch', icon: <Eye size={22} color="#60a5fa" variant="Bulk" />, label: 'Sky View' },
+                  { screen: 'telescope', icon: <Star1 size={22} color="#c9b896" variant="Bulk" />, label: 'Telescope' },
+                  ...(flags.ai_chat_enabled ? [{ screen: 'aichat', icon: <Star1 size={22} color="#d4c5a0" variant="Bold" />, label: 'Ask Orion' }] : []),
+                  { screen: 'calendar', icon: <Calendar size={22} color="#4ade80" variant="Bulk" />, label: 'Calendar' },
+                  { screen: 'events', icon: <Notification size={22} color="#fbbf24" variant="Bulk" />, label: 'Events' },
+                  { screen: 'polarscope', icon: <Discover size={22} color="#22d3ee" variant="Bulk" />, label: 'Polar Scope' },
+                  { screen: 'shop', icon: <ShoppingBag size={22} color="#f59e0b" variant="Bulk" />, label: 'Shop' },
+                  { screen: 'feedback', icon: <MessageText1 size={22} color="#60a5fa" variant="Bulk" />, label: 'Feedback' },
+                ].map((item) => (
+                  <TouchableOpacity key={item.screen} style={s.featureCard} activeOpacity={0.8} onPress={() => onNavigate(item.screen)}>
+                    <View style={s.featureIconWrap}>{item.icon}</View>
+                    <Text style={s.featureLabel}>{item.label}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+        </ScrollView>
+      ) : (
       <ScrollView
         contentContainerStyle={s.scroll}
         showsVerticalScrollIndicator={false}
@@ -366,6 +429,24 @@ export default function ProfileScreen({ onClose, onNavigate }: Props) {
 
         <View style={{ height: 140 }} />
       </ScrollView>
+      )}
+
+      {/* Sign-in modal — opened from the guest profile card. The LoginScreen
+          handles its own auth flow; we auto-close the modal as soon as the
+          AuthContext user becomes non-null (see useEffect above). */}
+      <Modal visible={showLogin} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setShowLogin(false)}>
+        <View style={{ flex: 1, backgroundColor: '#030308' }}>
+          <View style={s.modalHeader}>
+            <TouchableOpacity onPress={() => setShowLogin(false)} style={s.modalClose}>
+              <Text style={s.modalCloseText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+          {showLogin && (() => {
+            const LoginScreen = require('./auth/LoginScreen').default;
+            return <LoginScreen />;
+          })()}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -431,6 +512,40 @@ const s = StyleSheet.create({
   featureCard: { width: '22%', minWidth: 70, alignItems: 'center', paddingVertical: 14, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.03)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.06)' } as any,
   featureIconWrap: { width: 40, height: 40, borderRadius: 12, backgroundColor: 'rgba(255,255,255,0.04)', alignItems: 'center', justifyContent: 'center', marginBottom: 8 },
   featureLabel: { color: 'rgba(255,255,255,0.7)', fontSize: 11, fontFamily: F_REG, textAlign: 'center' },
+
+  // Guest mode card (Profile tab when no signed-in user)
+  guestCard: {
+    marginHorizontal: 20, marginTop: 16,
+    paddingVertical: 28, paddingHorizontal: 22,
+    borderRadius: 22,
+    backgroundColor: 'rgba(212,197,160,0.06)',
+    borderWidth: 1, borderColor: 'rgba(212,197,160,0.18)',
+    alignItems: 'center',
+  },
+  guestIconWrap: {
+    width: 64, height: 64, borderRadius: 20,
+    backgroundColor: 'rgba(212,197,160,0.12)',
+    alignItems: 'center', justifyContent: 'center',
+    marginBottom: 14,
+  },
+  guestTitle: { color: '#fff', fontSize: 18, fontFamily: F_BOLD, textAlign: 'center' },
+  guestSub: {
+    color: 'rgba(255,255,255,0.55)', fontSize: 13, fontFamily: F_REG,
+    textAlign: 'center', marginTop: 6, lineHeight: 18, marginBottom: 18,
+  },
+  guestPrimaryBtn: {
+    backgroundColor: '#d4c5a0',
+    paddingHorizontal: 22, paddingVertical: 12, borderRadius: 999,
+  },
+  guestPrimaryBtnText: { color: '#030308', fontSize: 14, fontFamily: F_BOLD },
+
+  // Sign-in modal — small top bar with Cancel; LoginScreen renders below it.
+  modalHeader: {
+    flexDirection: 'row', justifyContent: 'flex-end',
+    paddingHorizontal: 16, paddingTop: 12, paddingBottom: 4,
+  },
+  modalClose: { paddingHorizontal: 8, paddingVertical: 6 },
+  modalCloseText: { color: '#d4c5a0', fontSize: 15, fontFamily: F_BOLD },
 
   logoutBtn: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginHorizontal: 20, marginTop: 32, paddingVertical: 16, borderRadius: 16, backgroundColor: 'rgba(239,68,68,0.06)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.12)' },
   logoutText: { color: '#ef4444', fontSize: 15, fontFamily: F_BOLD },

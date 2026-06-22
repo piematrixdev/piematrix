@@ -3,7 +3,7 @@
     "name": "Pie Matrix",
     "slug": "piematrix",
     "scheme": "com.thepiematrix.app",
-    "version": "1.2.4",
+    "version": "2.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "icon": "./assets/app-icon.png",

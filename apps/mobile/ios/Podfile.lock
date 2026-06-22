@@ -77,6 +77,9 @@ PODS:
     - ExpoModulesCore
   - ExpoLogBox (55.0.8):
     - React-Core
+  - ExpoMediaLibrary (18.2.1):
+    - ExpoModulesCore
+    - React-Core
   - ExpoModulesCore (3.0.29):
     - hermes-engine
     - RCTRequired
@@ -2146,6 +2149,7 @@ DEPENDENCIES:
   - ExpoLinking (from `../../../node_modules/expo-linking/ios`)
   - ExpoLocation (from `../../../node_modules/expo-location/ios`)
   - "ExpoLogBox (from `../../../node_modules/@expo/log-box`)"
+  - ExpoMediaLibrary (from `../../../node_modules/expo-media-library/ios`)
   - ExpoModulesCore (from `../node_modules/expo-modules-core`)
   - ExpoSensors (from `../../../node_modules/expo-sensors/ios`)
   - ExpoTrackingTransparency (from `../../../node_modules/expo-tracking-transparency/ios`)
@@ -2284,6 +2288,8 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/expo-location/ios"
   ExpoLogBox:
     :path: "../../../node_modules/@expo/log-box"
+  ExpoMediaLibrary:
+    :path: "../../../node_modules/expo-media-library/ios"
   ExpoModulesCore:
     :path: "../node_modules/expo-modules-core"
   ExpoSensors:
@@ -2466,6 +2472,7 @@ SPEC CHECKSUMS:
   ExpoLinking: 2ef632ad5013e3f1568fae9408d56ab9af5efc55
   ExpoLocation: de58a60756fad907139ec422ccabb1ba734e080d
   ExpoLogBox: 393a66b37ef3005c2890eb8b4468329db20bee51
+  ExpoMediaLibrary: a3093b04365b245bb23b25b6eba84eb6ab55fecb
   ExpoModulesCore: f3da4f1ab5a8375d0beafab763739dbee8446583
   ExpoSensors: 02a52ddab1e3a8a1438258c3d87d1ee5f721743a
   ExpoTrackingTransparency: 4f823a38ff7c0efea4cac722ecbc0589278ff548

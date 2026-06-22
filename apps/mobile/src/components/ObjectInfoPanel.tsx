@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CloseCircle, Heart } from 'iconsax-react-native';
 import { useFavorites } from '../favorites/FavoritesContext';
+import { useAuth } from '../auth/AuthContext';
 import StarGLOrb from './StarGLOrb';
 
 export interface SelectedObject {
@@ -29,6 +30,9 @@ export interface SelectedObject {
 interface Props {
   object: SelectedObject;
   onClose: () => void;
+  /** Optional — if provided, the favorite button uses it to surface a sign-in
+   *  prompt for guests instead of silently saving locally. */
+  onRequestSignIn?: () => void;
 }
 
 function InfoRow({ label, value }: { label: string; value: string }) {
@@ -40,8 +44,9 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export default function ObjectInfoPanel({ object, onClose }: Props) {
+export default function ObjectInfoPanel({ object, onClose, onRequestSignIn }: Props) {
   const { isFavorite, toggleFavorite } = useFavorites();
+  const { user } = useAuth();
   const objectId = object.name;
   const favorited = isFavorite(objectId);
   const [wikiSummary, setWikiSummary] = useState<string | null>(null);
@@ -78,6 +83,23 @@ export default function ObjectInfoPanel({ object, onClose }: Props) {
   }, [object.name]);
 
   const handleToggleFavorite = () => {
+    // Favorites are an account feature — they sync across devices and the
+    // user's profile shows a count. Guests get a sign-in prompt rather than
+    // a silent local-only save (which would surprise them when they sign up
+    // later and saw nothing).
+    if (!user) {
+      Alert.alert(
+        'Sign in to save favorites',
+        'Create a free account or sign in to keep your favorite objects across devices.',
+        onRequestSignIn
+          ? [
+              { text: 'Not now', style: 'cancel' },
+              { text: 'Sign in', onPress: onRequestSignIn },
+            ]
+          : [{ text: 'OK', style: 'cancel' }],
+      );
+      return;
+    }
     toggleFavorite({
       id: objectId,
       name: object.name,

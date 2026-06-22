@@ -57,7 +57,11 @@ interface Props {
 
 export default function OnboardingScreen({ onComplete }: Props) {
   const { user } = useAuth();
-  const [step, setStep] = useState(0);
+  const [step, setStep] = useState(() => {
+    // If already signed in (social auth or returning after signup confirmed),
+    // start at step 2 (interests) — skip the welcome and signup screens.
+    return user ? 2 : 0;
+  });
   const [interests, setInterests] = useState<string[]>([]);
   const [level, setLevel] = useState<string>('');
   const [selectedGear, setSelectedGear] = useState<string[]>([]);
@@ -90,6 +94,7 @@ export default function OnboardingScreen({ onComplete }: Props) {
   };
 
   const nextStep = () => animateTransition(step + 1);
+  const prevStep = () => { if (step > 0) animateTransition(step - 1); };
 
   const toggleInterest = (id: string) => {
     setInterests(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
@@ -102,10 +107,13 @@ export default function OnboardingScreen({ onComplete }: Props) {
   const handleFinish = async () => {
     setSaving(true);
     try {
-      // If no user session (email confirmation pending), go to confirmation screen
+      // Guest path — no signed-in user. Finish onboarding without trying
+      // to write a user_profiles row (RLS would reject it, and there's no
+      // identity to associate). Apple App Review 5.1.1(v): the app must
+      // remain usable without registration.
       if (!user?.id) {
         setSaving(false);
-        animateTransition(6); // Show confirmation step
+        onComplete();
         return;
       }
 
@@ -144,14 +152,12 @@ export default function OnboardingScreen({ onComplete }: Props) {
     switch (step) {
       case 0: return <WelcomeStep onNext={nextStep} />;
       case 1:
-        // If already signed in, skip to interests
         if (isSignedIn) { nextStep(); return null; }
-        return <SignUpStep onNext={nextStep} />;
-      case 2: return <InterestsStep interests={interests} onToggle={toggleInterest} onNext={nextStep} />;
-      case 3: return <LevelStep level={level} onSelect={setLevel} onNext={nextStep} />;
-      case 4: return <GearStep products={products} selected={selectedGear} onToggle={toggleGear} customGear={customGear} onCustomChange={setCustomGear} onNext={() => { handleFinish(); }} />;
+        return <SignUpStep onNext={nextStep} onBack={prevStep} />;
+      case 2: return <InterestsStep interests={interests} onToggle={toggleInterest} onNext={nextStep} onBack={prevStep} onSkip={nextStep} />;
+      case 3: return <LevelStep level={level} onSelect={setLevel} onNext={nextStep} onBack={prevStep} onSkip={nextStep} />;
+      case 4: return <GearStep products={products} selected={selectedGear} onToggle={toggleGear} customGear={customGear} onCustomChange={setCustomGear} onNext={() => { handleFinish(); }} onBack={prevStep} onSkip={() => { handleFinish(); }} />;
       case 5:
-        // If already signed in, no confirmation needed — finish
         if (isSignedIn) { onComplete(); return null; }
         return <ConfirmEmailStep onDone={onComplete} />;
       default: return null;
@@ -165,12 +171,27 @@ export default function OnboardingScreen({ onComplete }: Props) {
     <View style={s.root}>
       <LinearGradient colors={['#030308', '#0a0a1a', '#030308']} style={StyleSheet.absoluteFillObject} />
 
-      {/* Progress dots */}
+      {/* Progress dots + back button + (sign-up step only) prominent Skip
+          link in the top-right so guests can bypass registration without
+          scrolling past every form field. */}
       {step > 0 && (
-        <View style={s.progress}>
-          {Array.from({ length: totalSteps }, (_, i) => (
-            <View key={i} style={[s.dot, i < displayStep && s.dotActive]} />
-          ))}
+        <View style={s.progressRow}>
+          <TouchableOpacity onPress={prevStep} style={s.backBtn} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+            <ArrowRight2 size={20} color="rgba(255,255,255,0.6)" variant="Linear" style={{ transform: [{ rotate: '180deg' }] }} />
+          </TouchableOpacity>
+          <View style={s.progress}>
+            {Array.from({ length: totalSteps }, (_, i) => (
+              <View key={i} style={[s.dot, i < displayStep && s.dotActive]} />
+            ))}
+          </View>
+          {step === 1 && !isSignedIn ? (
+            <TouchableOpacity onPress={onComplete} style={s.skipTopBtn} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Text style={s.skipTopText}>Skip</Text>
+              <ArrowRight2 size={14} color="#d4c5a0" variant="Bold" />
+            </TouchableOpacity>
+          ) : (
+            <View style={{ width: 64 }} />
+          )}
         </View>
       )}
 
@@ -207,7 +228,7 @@ function WelcomeStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-function SignUpStep({ onNext }: { onNext: () => void }) {
+function SignUpStep({ onNext, onBack }: { onNext: () => void; onBack?: () => void }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
@@ -465,7 +486,7 @@ function SignUpStep({ onNext }: { onNext: () => void }) {
   );
 }
 
-function InterestsStep({ interests, onToggle, onNext }: { interests: string[]; onToggle: (id: string) => void; onNext: () => void }) {
+function InterestsStep({ interests, onToggle, onNext, onBack, onSkip }: { interests: string[]; onToggle: (id: string) => void; onNext: () => void; onBack?: () => void; onSkip?: () => void }) {
   return (
     <View style={s.step}>
       <Text style={s.stepTitle}>What interests you?</Text>
@@ -485,11 +506,16 @@ function InterestsStep({ interests, onToggle, onNext }: { interests: string[]; o
         <Text style={s.primaryBtnText}>Continue</Text>
         <ArrowRight2 size={18} color="#030308" variant="Bold" />
       </TouchableOpacity>
+      {onSkip && (
+        <TouchableOpacity onPress={onSkip}>
+          <Text style={s.permSkip}>Skip for now</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
 
-function LevelStep({ level, onSelect, onNext }: { level: string; onSelect: (l: string) => void; onNext: () => void }) {
+function LevelStep({ level, onSelect, onNext, onBack, onSkip }: { level: string; onSelect: (l: string) => void; onNext: () => void; onBack?: () => void; onSkip?: () => void }) {
   return (
     <View style={s.step}>
       <Text style={s.stepTitle}>Your experience level</Text>
@@ -513,13 +539,19 @@ function LevelStep({ level, onSelect, onNext }: { level: string; onSelect: (l: s
         <Text style={s.primaryBtnText}>Continue</Text>
         <ArrowRight2 size={18} color="#030308" variant="Bold" />
       </TouchableOpacity>
+      {onSkip && (
+        <TouchableOpacity onPress={onSkip}>
+          <Text style={s.permSkip}>Skip for now</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
 
-function GearStep({ products, selected, onToggle, customGear, onCustomChange, onNext }: {
+function GearStep({ products, selected, onToggle, customGear, onCustomChange, onNext, onBack, onSkip }: {
   products: Product[]; selected: string[]; onToggle: (h: string) => void;
   customGear: string; onCustomChange: (t: string) => void; onNext: () => void;
+  onBack?: () => void; onSkip?: () => void;
 }) {
   return (
     <View style={s.step}>
@@ -556,9 +588,14 @@ function GearStep({ products, selected, onToggle, customGear, onCustomChange, on
       />
 
       <TouchableOpacity style={s.primaryBtn} onPress={onNext}>
-        <Text style={s.primaryBtnText}>{selected.length > 0 || customGear ? 'Continue' : 'Skip'}</Text>
+        <Text style={s.primaryBtnText}>{selected.length > 0 || customGear ? 'Finish' : 'Skip & Finish'}</Text>
         <ArrowRight2 size={18} color="#030308" variant="Bold" />
       </TouchableOpacity>
+      {onSkip && (
+        <TouchableOpacity onPress={onSkip}>
+          <Text style={s.permSkip}>Skip for now</Text>
+        </TouchableOpacity>
+      )}
     </View>
   );
 }
@@ -601,22 +638,24 @@ function ConfirmEmailStep({ onDone }: { onDone: () => void }) {
 
 const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#030308' },
-  content: { flex: 1, paddingHorizontal: 24, paddingBottom: 40 },
-  progress: { flexDirection: 'row', justifyContent: 'center', gap: 8, paddingTop: 60, paddingBottom: 16 },
+  content: { flex: 1, paddingHorizontal: W >= 700 ? 60 : 24, paddingBottom: 40, maxWidth: 560, alignSelf: 'center', width: '100%' } as any,
+  progress: { flexDirection: 'row', justifyContent: 'center', gap: 8 },
+  progressRow: { flexDirection: 'row', alignItems: 'center', paddingTop: 60, paddingBottom: 16, paddingHorizontal: 20 },
+  backBtn: { width: 32, height: 32, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.06)', alignItems: 'center', justifyContent: 'center' },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: 'rgba(255,255,255,0.12)' },
   dotActive: { backgroundColor: '#d4c5a0', width: 24, borderRadius: 4 },
 
   // Steps
   step: { flex: 1, paddingTop: 30, justifyContent: 'space-between' },
-  stepCenter: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 40 },
+  stepCenter: { flex: 1, justifyContent: W >= 700 ? 'flex-start' : 'center', alignItems: 'center', paddingBottom: 40, paddingTop: W >= 700 ? 80 : 0 },
   stepTitle: { color: '#fff', fontSize: 24, fontFamily: 'Poppins-Black', marginBottom: 8, textAlign: 'center' },
   stepSub: { color: 'rgba(255,255,255,0.5)', fontSize: 14, fontFamily: F_REG, textAlign: 'center', lineHeight: 20, marginBottom: 24 },
 
   // Welcome
   welcomeLogo: { width: 90, height: 90, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center' } as any,
   welcomeLogoImg: { width: 58, height: 58, resizeMode: 'contain' } as any,
-  welcomeTitle: { color: '#fff', fontSize: 28, fontFamily: 'Poppins-Black', marginTop: 24, textAlign: 'center' },
-  welcomeSub: { color: 'rgba(255,255,255,0.5)', fontSize: 15, fontFamily: F_LIGHT, textAlign: 'center', marginTop: 12, lineHeight: 22 },
+  welcomeTitle: { color: '#fff', fontSize: W >= 700 ? 32 : 28, fontFamily: 'Poppins-Black', marginTop: 24, textAlign: 'center' },
+  welcomeSub: { color: 'rgba(255,255,255,0.5)', fontSize: W >= 700 ? 17 : 15, fontFamily: F_LIGHT, textAlign: 'center', marginTop: 12, lineHeight: W >= 700 ? 26 : 22, maxWidth: 440 },
 
   // Sign-up form
   signUpForm: { marginBottom: 20 },
@@ -634,7 +673,7 @@ const s = StyleSheet.create({
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 18 },
   dividerLine: { flex: 1, height: 1, backgroundColor: 'rgba(255,255,255,0.08)' },
   dividerText: { color: 'rgba(255,255,255,0.25)', fontSize: 12, fontFamily: F_LIGHT, marginHorizontal: 14 },
-  socialRow: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginBottom: 16 },
+  socialRow: { flexDirection: 'row', justifyContent: 'center', gap: 12, marginBottom: 16, flexWrap: 'wrap' },
   socialBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
     paddingVertical: 14, paddingHorizontal: 24, borderRadius: 14,
@@ -673,6 +712,16 @@ const s = StyleSheet.create({
   permTitle: { color: '#fff', fontSize: 16, fontFamily: F_SEMIBOLD },
   permDesc: { color: 'rgba(255,255,255,0.45)', fontSize: 13, fontFamily: F_LIGHT, marginTop: 3, lineHeight: 18 },
   permSkip: { color: 'rgba(255,255,255,0.35)', fontSize: 13, fontFamily: F_REG, textAlign: 'center', marginBottom: 16 },
+  // Top-right "Skip" link in the onboarding progress row — visible the moment
+  // the sign-up step appears, so guests don't have to scroll past the form.
+  skipTopBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(212,197,160,0.12)',
+    borderWidth: 1, borderColor: 'rgba(212,197,160,0.35)',
+  },
+  skipTopText: { color: '#d4c5a0', fontSize: 13, fontFamily: F_BOLD },
 
   // Level
   levelCard: {
@@ -706,7 +755,8 @@ const s = StyleSheet.create({
   primaryBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: '#d4c5a0', paddingVertical: 18, paddingHorizontal: 32, borderRadius: 16, marginTop: 24, marginBottom: 20,
-  },
+    maxWidth: 400, alignSelf: 'center', width: '100%',
+  } as any,
   primaryBtnText: { color: '#030308', fontSize: 16, fontFamily: F_BOLD },
   btnDisabled: { opacity: 0.4 },
 

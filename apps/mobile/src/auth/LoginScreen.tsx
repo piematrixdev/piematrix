@@ -32,6 +32,8 @@ export default function LoginScreen() {
   const [showEmail, setShowEmail] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+  const [phone, setPhone] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
 
   // --- Apple Sign-In ---
@@ -127,16 +129,40 @@ export default function LoginScreen() {
 
   // --- Email/Password ---
   const handleEmailAuth = async () => {
+    if (isSignUp && !fullName.trim()) {
+      Alert.alert('Name required', 'Please enter your full name.');
+      return;
+    }
     if (!email || !password) {
       Alert.alert('Missing fields', 'Please enter email and password.');
+      return;
+    }
+    if (isSignUp && password.length < 6) {
+      Alert.alert('Password too short', 'Password must be at least 6 characters.');
       return;
     }
     try {
       setLoading(true);
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email, password });
-        if (error) Alert.alert('Sign up failed', error.message);
-        else Alert.alert('Check your email', 'We sent you a confirmation link.');
+        const { error, data } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+          options: {
+            emailRedirectTo: 'com.thepiematrix.app://auth/callback',
+            data: {
+              full_name: fullName.trim(),
+              phone: phone.trim() || null,
+            },
+          },
+        });
+        if (error) {
+          Alert.alert('Sign up failed', error.message);
+        } else if (data?.user?.identities?.length === 0) {
+          // User already exists — Supabase returns empty identities for duplicates
+          Alert.alert('Account exists', 'An account with this email already exists. Try signing in instead.');
+        } else {
+          Alert.alert('Check your email', 'We sent you a confirmation link. Tap it to activate your account.');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) Alert.alert('Sign in failed', error.message);
@@ -232,6 +258,27 @@ export default function LoginScreen() {
           </TouchableOpacity>
         ) : (
           <View style={s.emailForm}>
+            {isSignUp && (
+              <>
+                <TextInput
+                  style={s.input}
+                  placeholder="Full Name"
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={fullName}
+                  onChangeText={setFullName}
+                  autoCapitalize="words"
+                  autoCorrect={false}
+                />
+                <TextInput
+                  style={s.input}
+                  placeholder="Phone (optional)"
+                  placeholderTextColor="rgba(255,255,255,0.3)"
+                  value={phone}
+                  onChangeText={setPhone}
+                  keyboardType="phone-pad"
+                />
+              </>
+            )}
             <TextInput
               style={s.input}
               placeholder="Email"

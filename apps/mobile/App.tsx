@@ -563,7 +563,7 @@ function AppContent() {
   if (currentScreen === 'telescope') return (<View style={{ flex: 1 }}><TelescopeScreen observer={skyRefs.coords.current} onClose={() => navigateTo('home')} onOpenPolarScope={() => navigateTo('polarscope')} /><BottomTabBar active="" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
   if (currentScreen === 'product' && selectedProductHandle) return <ProductDetailScreen handle={selectedProductHandle} onClose={goBack} />;
   if (currentScreen === 'category' && selectedCategory) return <CategoryScreen collectionHandle={selectedCategory.handle} title={selectedCategory.title} onClose={goBack} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} />;
-  if (currentScreen === 'shop') return (<View style={{ flex: 1 }}><ShopScreen onClose={() => navigateTo('home')} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} /><BottomTabBar active="shop" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
+  if (currentScreen === 'shop') return (<View style={{ flex: 1 }}><ShopScreen onClose={() => navigateTo('home')} onProductSelect={(handle) => { setSelectedProductHandle(handle); navigateTo('product'); }} onCategorySelect={(handle, title) => { setSelectedCategory({ handle, title }); navigateTo('category'); }} onProfilePress={() => navigateTo('profile')} /><BottomTabBar active="shop" onNav={(sc) => { if (sc === 'skywatch') recalibrate(); navigateTo(sc); }} /></View>);
   if (currentScreen === 'polarscope') return <PolarScopeScreen onClose={goBack} observerLongitude={skyRefs.coords.current.longitude} />;
   if (currentScreen === 'aichat') {
     if (!flags.ai_chat_enabled) {
@@ -912,7 +912,17 @@ function AppContent() {
         </View>
       )}
       {selectedObject && (
-        <ObjectInfoPanel object={selectedObject} onClose={() => { setSelectedObject(null); selectedObjectRef.current = { name: null, type: null }; }} />
+        <ObjectInfoPanel
+          object={selectedObject}
+          onClose={() => { setSelectedObject(null); selectedObjectRef.current = { name: null, type: null }; }}
+          onRequestSignIn={() => {
+            // Drop the user on the Profile tab — it has the in-app sign-in
+            // modal. Avoids a separate routing entry just for auth.
+            setSelectedObject(null);
+            selectedObjectRef.current = { name: null, type: null };
+            navigateTo('profile');
+          }}
+        />
       )}
 
       {/* Search targeting reticle */}
@@ -1439,14 +1449,18 @@ function AuthGate() {
   }
   // Password recovery flow
   if (passwordRecovery && user) return <ResetPasswordScreen />;
-  // First time — show onboarding (includes sign-up)
+  // First time — show onboarding (sign-up step has a Skip option for users
+  // who want to browse as guests). Apple App Review 5.1.1(v).
   if (!onboardingSeen) return <OnboardingScreen onComplete={markOnboardingSeen} />;
-  // Onboarding done but no session — show sign-in only
+  // Guest mode: no signed-in user → shop-only experience with a persistent
+  // "Sign in to unlock everything" CTA. Sky view, telescope, calendar, and
+  // other personalized features stay behind sign-in (account-bound).
   if (!user) {
-    const LoginScreen = require('./src/auth/LoginScreen').default;
-    return <LoginScreen />;
+    const GuestApp = require('./src/GuestApp').default;
+    return <GuestApp />;
   }
-  // Signed in but profile not set up — show onboarding again (for social sign-in users)
+  // Signed in but profile not set up — show onboarding again to collect
+  // interests / level / gear (skippable).
   if (onboardingDone === false) return <OnboardingScreen onComplete={markOnboardingSeen} />;
   return <AppContent />;
 }
